@@ -1,0 +1,479 @@
+import * as db from './db.js';
+import {
+  PITCH_TYPES, ZONES, ACTIONS, RESULT_LABELS, PA_END_LABELS,
+  replay, buildPitchRow, activeEvents,
+} from './game.js';
+import { initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection } from './sync.js';
+import { backupJSON, exportCSV, importBackup } from './backup.js';
+
+const app = document.getElementById('app');
+const LINEUP_SIZE = 9;
+
+let current = null; // { game, events, state }
+let sel = { pitchType: null, zone: null, action: null };
+let persistence = 'unknown';
+
+// ---------- helpers ----------
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  }));
+const playerLabel = (p) => (p ? `${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}` : '');
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+let toastTimer = null;
+function toast(html, kind = '') {
+  const el = document.getElementById('toast');
+  el.className = `show ${kind}`;
+  el.innerHTML = html;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 2600);
+}
+
+function badgeHTML(s = getSyncStatus()) {
+  let cls = 'ok'; let text = '✓ All synced';
+  if (!s.configured) { cls = s.pending ? 'warn' : 'muted'; text = s.pending ? `${s.pending} not uploaded · no sheet set` : 'Sheet not set up'; }
+  else if (s.syncing) { cls = 'busy'; text = `Syncing ${s.pending}…`; }
+  else if (s.pending) { cls = 'warn'; text = `⚠ ${s.pending} not uploaded${s.error ? ` · ${esc(s.error)}` : ''}`; }
+  return `<button class="sync-badge ${cls}" data-act="sync" aria-label="Sync status">${text}</button>`;
+}
+
+onSyncStatus((s) => {
+  document.querySelectorAll('.sync-badge').forEach((el) => { el.outerHTML = badgeHTML(s); });
+});
+
+function openDialog(html, onClick) {
+  const dlg = document.createElement('dialog');
+  dlg.innerHTML = html;
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) { dlg.close(); return; } // tap on backdrop
+    const btn = e.target.closest('[data-act]');
+    if (btn?.dataset.act === 'close') { dlg.close(); return; }
+    if (btn) onClick?.(btn.dataset.act, btn, dlg, e);
+  });
+  dlg.showModal();
+  return dlg;
+}
+
+// ---------- home ----------
+async function showHome() {
+  app.classList.remove('tracker-mode');
+  current = null;
+  const games = await db.listGames();
+  app.innerHTML = `
+    <header class="bar">
+      <h1>PitchTracker</h1>
+      ${badgeHTML()}
+    </header>
+    <main class="page">
+      ${isStandalone() ? '' : `<div class="notice">
+        <strong>Install the app:</strong> tap <em>Share</em> → <em>Add to Home Screen</em>, then open it from there.
+        Data is only kept safely when it runs as an installed app.</div>`}
+      ${persistence === 'not-persisted' ? '<div class="notice">Storage is not marked persistent yet. Install to the home screen and reopen the app.</div>' : ''}
+      <button class="big primary" data-act="new">＋ New game</button>
+      <h2>Games</h2>
+      <ul class="list">
+        ${games.map((g) => `<li><button class="row" data-act="open" data-key="${esc(g.key)}">
+            <strong>${esc(g.gameId)}</strong>
+            <span>${new Date(g.createdAt).toLocaleString()}</span></button></li>`).join('')
+          || '<li class="muted">No games yet.</li>'}
+      </ul>
+      <div class="row-buttons">
+        <button data-act="settings">Settings</button>
+        <label class="button">Import backup<input type="file" accept=".json,application/json" hidden id="import-file"></label>
+      </div>
+    </main>`;
+
+  app.onclick = (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'new') showSetup();
+    else if (act === 'open') showTracker(btn.dataset.key);
+    else if (act === 'settings') showSettings();
+    else if (act === 'sync') syncNow();
+  };
+  document.getElementById('import-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const r = await importBackup(file);
+      toast(`Imported ${esc(r.game.gameId)}: ${r.added} new events`);
+      await refreshPending();
+      syncSoon(0);
+      showHome();
+    } catch (err) {
+      toast(`Import failed: ${esc(err.message)}`, 'error');
+    }
+  };
+}
+
+// ---------- setup ----------
+function showSetup() {
+  app.classList.remove('tracker-mode');
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = Array.from({ length: LINEUP_SIZE }, (_, i) => `
+    <div class="lineup-row">
+      <span class="slot">${i + 1}</span>
+      <input name="num${i}" inputmode="numeric" placeholder="#" class="num" autocomplete="off">
+      <input name="name${i}" placeholder="Batter ${i + 1}" autocomplete="off" autocapitalize="words">
+    </div>`).join('');
+
+  app.innerHTML = `
+    <header class="bar">
+      <button class="icon" data-act="back" aria-label="Back">‹</button>
+      <h1>New game</h1>
+      <span></span>
+    </header>
+    <main class="page">
+      <form id="setup" autocomplete="off">
+        <label>Game ID<input name="gameId" required value="${today}-" autocapitalize="characters"></label>
+        <label>Starting pitcher <span class="muted">(optional)</span><input name="pitcher" autocapitalize="words"></label>
+        <h2>Batting order</h2>
+        ${rows}
+        <button class="big primary" type="submit">Start game</button>
+      </form>
+    </main>`;
+
+  app.onclick = (e) => {
+    if (e.target.closest('[data-act="back"]')) showHome();
+  };
+  document.getElementById('setup').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const gameId = String(f.get('gameId')).trim();
+    const lineup = [];
+    for (let i = 0; i < LINEUP_SIZE; i++) {
+      const name = String(f.get(`name${i}`)).trim();
+      const number = String(f.get(`num${i}`)).trim();
+      if (name || number) lineup.push({ name: name || `Batter ${i + 1}`, number });
+    }
+    if (!gameId) { toast('Enter a game ID', 'error'); return; }
+    if (!lineup.length) { toast('Enter at least one batter', 'error'); return; }
+    const game = { key: uuid(), gameId, pitcher: String(f.get('pitcher')).trim(), lineup, createdAt: Date.now() };
+    await db.putGame(game);
+    showTracker(game.key);
+  };
+}
+
+// ---------- tracker ----------
+async function showTracker(key) {
+  const game = await db.getGame(key);
+  if (!game) { showHome(); return; }
+  const events = await db.getEvents(key);
+  current = { game, events, state: replay(game, events) };
+  sel = { pitchType: null, zone: null, action: null };
+  renderTracker();
+}
+
+function nextSeq() {
+  return current.events.reduce((m, e) => Math.max(m, e.seq), 0) + 1;
+}
+
+async function addEvent(type, data, extra = {}) {
+  const ev = {
+    id: uuid(), gameKey: current.game.key, seq: nextSeq(), type, data,
+    createdAt: Date.now(), deleted: 0, dirty: 0, rev: 1, ...extra,
+  };
+  if (type === 'pitch') {
+    ev.row = buildPitchRow(current.game, current.state, data, ev);
+    ev.dirty = 1;
+  }
+  await db.putEvent(ev); // committed to disk before we move on
+  current.events.push(ev);
+  current.state = replay(current.game, current.events);
+  return ev;
+}
+
+function dots(n, max, cls) {
+  return Array.from({ length: max }, (_, i) => `<i class="dot ${i < n ? cls : ''}"></i>`).join('');
+}
+
+function padGroup(title, group, options, cols) {
+  return `<section class="group group-${group}">
+    <h3>${title}</h3>
+    <div class="pads cols-${cols}">
+      ${Object.entries(options).map(([value, label]) => `
+        <button class="pad ${sel[group] === value ? 'selected' : ''}" data-act="pad" data-group="${group}" data-value="${value}">${label}</button>`).join('')}
+    </div></section>`;
+}
+
+function renderTracker() {
+  const { game, state } = current;
+  const batter = state.lineup[state.slot];
+  const onDeck = state.lineup[(state.slot + 1) % state.lineup.length];
+  app.classList.add('tracker-mode');
+  app.innerHTML = `
+    <header class="scorebar">
+      <button class="icon" data-act="menu" aria-label="Menu">☰</button>
+      <div class="inning">
+        <button data-act="inning" data-delta="-1" aria-label="Previous inning">−</button>
+        <span>Inn ${state.inning}</span>
+        <button data-act="inning" data-delta="1" aria-label="Next inning">+</button>
+      </div>
+      <div class="count" aria-label="Count ${state.balls} balls ${state.strikes} strikes">
+        <div class="count-num">${state.balls}<span>-</span>${state.strikes}</div>
+        <div class="count-dots"><span>B ${dots(state.balls, 3, 'ball')}</span><span>S ${dots(state.strikes, 2, 'strike')}</span></div>
+      </div>
+      ${badgeHTML()}
+    </header>
+    <div class="batter-bar">
+      <div><span class="label">Batting ${state.slot + 1}</span> <strong>${playerLabel(batter)}</strong>
+        <span class="muted"> · PA ${state.paNumber}${state.pitchInPa ? ` · pitch ${state.pitchInPa + 1}` : ''}</span></div>
+      <div class="last ${current.last?.paEnd ? 'pa-end' : ''}">${current.last?.html || '&nbsp;'}</div>
+      <div class="muted small">On deck: ${playerLabel(onDeck)}${state.pitcher ? ` · P: ${esc(state.pitcher)} (${state.pitcherPitches})` : ` · ${state.pitchNumber} pitches`}</div>
+    </div>
+    <main class="tracker">
+      ${padGroup('Pitch', 'pitchType', { FB: 'Fastball', CB: 'Curveball' }, 2)}
+      ${padGroup('Zone', 'zone', { IN: 'In', OUT: 'Out' }, 2)}
+      ${padGroup('Batter', 'action', { TAKE: 'Take', SWING: 'Swing', FOUL: 'Foul', IN_PLAY: 'In play' }, 4)}
+    </main>
+    <footer class="actions">
+      <button data-act="undo" ${activeEvents(current.events).length ? '' : 'disabled'}>↶ Undo</button>
+      <button data-act="next">Next batter ›</button>
+      <button data-act="lineup">Lineup / Subs</button>
+      <button data-act="log">Log</button>
+    </footer>`;
+
+  app.onclick = (e) => { queue = queue.then(() => handleTrackerClick(e)).catch((err) => toast(`Error: ${esc(err.message)}`, 'error')); };
+}
+
+// Taps are handled strictly one after another so fast double-taps can't race.
+let queue = Promise.resolve();
+
+async function handleTrackerClick(e) {
+  const btn = e.target.closest('[data-act]');
+  if (!btn || btn.disabled) return;
+  const act = btn.dataset.act;
+  if (act === 'pad') {
+    const { group, value } = btn.dataset;
+    sel[group] = sel[group] === value ? null : value;
+    if (sel.pitchType && sel.zone && sel.action) {
+      const input = { ...sel };
+      sel = { pitchType: null, zone: null, action: null };
+      await recordPitch(input);
+    }
+    renderTracker();
+  } else if (act === 'undo') {
+    await undo();
+  } else if (act === 'next') {
+    await addEvent('nextBatter', {});
+    current.last = { html: 'Moved to next batter', paEnd: false };
+    renderTracker();
+  } else if (act === 'inning') {
+    await addEvent('inning', { delta: Number(btn.dataset.delta) });
+    renderTracker();
+  } else if (act === 'lineup') {
+    showLineupDialog();
+  } else if (act === 'log') {
+    showLogDialog();
+  } else if (act === 'menu') {
+    showMenu();
+  } else if (act === 'sync') {
+    syncNow();
+  }
+}
+
+async function recordPitch(input) {
+  const ev = await addEvent('pitch', input);
+  const r = ev.row;
+  let msg = `Last: ${PITCH_TYPES[input.pitchType]} · ${input.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[input.action]} → <strong>${RESULT_LABELS[r.result]}</strong>`;
+  if (r.pa_end) {
+    msg += ` · <strong>${PA_END_LABELS[r.pa_end]}</strong>, next batter up`;
+  }
+  current.last = { html: msg, paEnd: !!r.pa_end };
+  await refreshPending();
+  syncSoon();
+}
+
+function describeEvent(ev) {
+  switch (ev.type) {
+    case 'pitch': return `pitch (${PITCH_TYPES[ev.data.pitchType]}, ${ACTIONS[ev.data.action]})`;
+    case 'nextBatter': return 'next batter';
+    case 'setBatter': return 'batter change';
+    case 'sub': return `substitution (${esc(ev.data.name)})`;
+    case 'pitcher': return `pitcher change (${esc(ev.data.name)})`;
+    case 'inning': return 'inning change';
+    default: return ev.type;
+  }
+}
+
+async function undo() {
+  const last = activeEvents(current.events).at(-1);
+  if (!last) return;
+  if (last.type === 'pitch') {
+    // Keep a tombstone so the row is marked deleted in the sheet too.
+    last.deleted = 1;
+    last.dirty = 1;
+    last.rev += 1;
+    last.row = { ...last.row, deleted: true };
+    await db.putEvent(last);
+  } else {
+    await db.deleteEvent(last.id);
+    current.events = current.events.filter((e) => e !== last);
+  }
+  current.state = replay(current.game, current.events);
+  sel = { pitchType: null, zone: null, action: null };
+  current.last = { html: `Undid ${describeEvent(last)}`, paEnd: false };
+  renderTracker();
+  await refreshPending();
+  syncSoon();
+}
+
+function showLineupDialog() {
+  const { state } = current;
+  const rows = state.lineup.map((p, i) => `
+    <div class="lineup-row">
+      <label class="slot-radio"><input type="radio" name="current" value="${i}" ${i === state.slot ? 'checked' : ''}><span>${i + 1}</span></label>
+      <input name="num${i}" class="num" inputmode="numeric" value="${esc(p.number)}" placeholder="#">
+      <input name="name${i}" value="${esc(p.name)}" autocapitalize="words">
+    </div>`).join('');
+  const dlg = openDialog(`
+    <form method="dialog" id="lineup-form">
+      <h2>Lineup &amp; substitutions</h2>
+      <p class="muted small">Edit a name to substitute that spot. The selected circle is the current batter.</p>
+      ${rows}
+      <label>Pitcher<input name="pitcher" value="${esc(state.pitcher)}" autocapitalize="words"></label>
+      <div class="row-buttons">
+        <button type="button" data-act="close">Cancel</button>
+        <button type="button" class="primary" data-act="save">Save</button>
+      </div>
+    </form>`, async (act, btn, d) => {
+    if (act !== 'save') return;
+    const f = new FormData(d.querySelector('form'));
+    let changes = 0;
+    for (let i = 0; i < state.lineup.length; i++) {
+      const name = String(f.get(`name${i}`)).trim();
+      const number = String(f.get(`num${i}`)).trim();
+      const p = current.state.lineup[i];
+      if (name && (name !== p.name || number !== p.number)) {
+        await addEvent('sub', { slot: i, name, number, replaced: p.name });
+        changes++;
+      }
+    }
+    const pitcher = String(f.get('pitcher')).trim();
+    if (pitcher !== current.state.pitcher) { await addEvent('pitcher', { name: pitcher }); changes++; }
+    const slot = Number(f.get('current'));
+    if (slot !== current.state.slot) { await addEvent('setBatter', { slot }); changes++; }
+    d.close();
+    if (changes) toast(`Saved ${changes} change${changes > 1 ? 's' : ''}`);
+    renderTracker();
+  });
+  dlg.querySelector('form').onsubmit = (e) => e.preventDefault();
+}
+
+function showLogDialog() {
+  const pitches = activeEvents(current.events).filter((e) => e.type === 'pitch').map((e) => e.row);
+  const byPa = new Map();
+  for (const r of pitches) {
+    if (!byPa.has(r.pa_number)) byPa.set(r.pa_number, []);
+    byPa.get(r.pa_number).push(r);
+  }
+  const items = [...byPa.entries()].reverse().map(([pa, rows]) => {
+    const first = rows[0];
+    const end = rows.at(-1).pa_end;
+    return `<li><div class="log-head"><strong>PA ${pa}</strong> · Inn ${first.inning} · ${first.batter_number ? `#${esc(first.batter_number)} ` : ''}${esc(first.batter)}
+        ${end ? `<span class="tag">${PA_END_LABELS[end]}</span>` : ''}</div>
+      <ol>${rows.map((r) => `<li>${r.balls_before}-${r.strikes_before} · ${r.pitch_type} · ${r.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[r.action]} → ${RESULT_LABELS[r.result]}</li>`).join('')}</ol></li>`;
+  }).join('');
+  openDialog(`
+    <h2>Pitch log · ${pitches.length} pitches</h2>
+    <ul class="log">${items || '<li class="muted">No pitches yet.</li>'}</ul>
+    <div class="row-buttons"><button data-act="close" class="primary">Close</button></div>`);
+}
+
+function showMenu() {
+  const s = getSyncStatus();
+  openDialog(`
+    <h2>${esc(current.game.gameId)}</h2>
+    <p>${s.pending ? `<strong>${s.pending} pitch${s.pending > 1 ? 'es' : ''} not uploaded yet.</strong> Back up if you have no signal.` : 'All pitches are uploaded.'}</p>
+    <div class="menu">
+      <button data-act="backup" class="primary">Back up game (file)</button>
+      <button data-act="csv">Export CSV</button>
+      <button data-act="sync">Sync now</button>
+      <button data-act="exit">Exit to games list</button>
+      <button data-act="close">Close</button>
+    </div>`, async (act, btn, dlg) => {
+    if (act === 'backup') {
+      const r = await backupJSON(current.game, current.events);
+      if (r !== 'cancelled') toast('Backup created');
+    } else if (act === 'csv') {
+      await exportCSV(current.game, current.events);
+    } else if (act === 'sync') {
+      dlg.close();
+      await syncNow();
+      const after = getSyncStatus();
+      toast(after.pending ? `Not synced: ${esc(after.error || 'still pending')}` : 'All synced', after.pending ? 'error' : '');
+    } else if (act === 'exit') {
+      if (getSyncStatus().pending && !confirm('Some pitches are not uploaded yet. They stay safe on this device. Exit anyway?')) return;
+      dlg.close();
+      showHome();
+    }
+  });
+}
+
+// ---------- settings ----------
+async function showSettings() {
+  app.classList.remove('tracker-mode');
+  const settings = await db.getSettings();
+  const s = getSyncStatus();
+  app.innerHTML = `
+    <header class="bar">
+      <button class="icon" data-act="back" aria-label="Back">‹</button>
+      <h1>Settings</h1>
+      <span></span>
+    </header>
+    <main class="page">
+      <form id="settings">
+        <h2>Google Sheet connection</h2>
+        <label>Apps Script web app URL<input name="url" type="url" value="${esc(settings.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
+        <label>Token<input name="token" value="${esc(settings.token)}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <div class="row-buttons">
+          <button type="button" data-act="test">Test connection</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+      <h2>Status</h2>
+      <ul class="facts">
+        <li>Pitches waiting to upload: <strong>${s.pending}</strong></li>
+        <li>Last sync: ${s.lastSync ? new Date(s.lastSync).toLocaleString() : 'not this session'}</li>
+        <li>Installed as app: ${isStandalone() ? 'yes' : '<strong>no</strong> — add to Home Screen'}</li>
+        <li>Persistent storage: ${esc(persistence)}</li>
+      </ul>
+    </main>`;
+  const form = document.getElementById('settings');
+  app.onclick = async (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    if (btn.dataset.act === 'back') showHome();
+    if (btn.dataset.act === 'test') {
+      const url = form.url.value.trim();
+      try { await testConnection(url); toast('Connection works ✓'); }
+      catch (err) { toast(`Connection failed: ${esc(err.message)}`, 'error'); }
+    }
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    await db.saveSettings({ url: form.url.value.trim(), token: form.token.value.trim() });
+    toast('Saved');
+    syncNow();
+  };
+}
+
+// ---------- boot ----------
+async function boot() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW registration failed', err));
+  }
+  persistence = await db.requestPersistence();
+  initSync();
+  showHome();
+}
+
+window.addEventListener('error', (e) => toast(`Error: ${esc(e.message)}`, 'error'));
+window.addEventListener('unhandledrejection', (e) => toast(`Error: ${esc(e.reason?.message || e.reason)}`, 'error'));
+boot();
