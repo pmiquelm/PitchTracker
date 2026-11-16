@@ -5,6 +5,7 @@ import {
 } from './game.js';
 import { initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection } from './sync.js';
 import { backupJSON, exportCSV, importBackup } from './backup.js';
+import { buildSetupLink, decodeConnect } from './connect.js';
 
 const app = document.getElementById('app');
 const LINEUP_SIZE = 9;
@@ -12,6 +13,7 @@ const LINEUP_SIZE = 9;
 let current = null; // { game, events, state }
 let sel = { pitchType: null, zone: null, action: null };
 let persistence = 'unknown';
+let settingsCache = {}; // { url, token, recorder, deviceId, appliedLink }
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,7 +75,13 @@ async function showHome() {
       ${isStandalone() ? '' : `<div class="notice">
         <strong>Install the app:</strong> tap <em>Share</em> → <em>Add to Home Screen</em>, then open it from there.
         Data is only kept safely when it runs as an installed app.</div>`}
-      ${persistence === 'not-persisted' ? '<div class="notice">Storage is not marked persistent yet. Install to the home screen and reopen the app.</div>' : ''}
+      ${persistence === 'not-persisted' && isStandalone() ? '<div class="notice">Storage is not marked persistent yet. Install to the home screen and reopen the app.</div>' : ''}
+      ${settingsCache.url ? '' : `<div class="connect-box">
+        <strong>Connect to the team sheet</strong>
+        <p class="muted small">Paste the setup link you were sent (or open it on this device).</p>
+        <input id="connect-input" placeholder="https://…#connect=…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <div class="row-buttons"><button data-act="paste-link">Paste</button><button class="primary" data-act="connect">Connect</button></div>
+      </div>`}
       <button class="big primary" data-act="new">＋ New game</button>
       <h2>Games</h2>
       <ul class="list">
@@ -96,6 +104,10 @@ async function showHome() {
     else if (act === 'open') showTracker(btn.dataset.key);
     else if (act === 'settings') showSettings();
     else if (act === 'sync') syncNow();
+    else if (act === 'paste-link') pasteInto(document.getElementById('connect-input'));
+    else if (act === 'connect') {
+      connectFromLink(document.getElementById('connect-input').value).then((ok) => { if (ok) showHome(); });
+    }
   };
   document.getElementById('import-file').onchange = async (e) => {
     const file = e.target.files[0];
@@ -181,6 +193,7 @@ async function addEvent(type, data, extra = {}) {
   };
   if (type === 'pitch') {
     ev.row = buildPitchRow(current.game, current.state, data, ev);
+    ev.row.recorded_by = recorderLabel();
     ev.dirty = 1;
   }
   await db.putEvent(ev); // committed to disk before we move on
@@ -432,11 +445,22 @@ async function showSettings() {
         <h2>Google Sheet connection</h2>
         <label>Apps Script web app URL<input name="url" type="url" value="${esc(settings.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
         <label>Token<input name="token" value="${esc(settings.token)}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Your name <span class="muted">(saved on each pitch as recorded_by)</span><input name="recorder" value="${esc(settings.recorder)}" autocapitalize="words" placeholder="optional"></label>
         <div class="row-buttons">
           <button type="button" data-act="test">Test connection</button>
           <button type="submit" class="primary">Save</button>
         </div>
       </form>
+      <h2>Share with other recorders</h2>
+      ${settings.url && settings.token ? `
+        <p class="muted small">Anyone who opens this link gets connected to this sheet and can add pitches to it. Share it only with people who record for you.
+        To let people <em>view</em> the data, share the Google Sheet itself instead.</p>
+        <input id="setup-link" readonly value="${esc(buildSetupLink(appBaseUrl(), settings))}">
+        <div class="row-buttons"><button data-act="share-link" class="primary">Share setup link</button></div>`
+        : '<p class="muted small">Connect a sheet first, then you can share a setup link from here.</p>'}
+      <h2>Use a setup link</h2>
+      <input id="connect-input" placeholder="Paste a setup link" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="row-buttons"><button data-act="paste-link">Paste</button><button data-act="connect">Connect</button></div>
       <h2>Status</h2>
       <ul class="facts">
         <li>Pitches waiting to upload: <strong>${s.pending}</strong></li>
@@ -455,13 +479,79 @@ async function showSettings() {
       try { await testConnection(url); toast('Connection works ✓'); }
       catch (err) { toast(`Connection failed: ${esc(err.message)}`, 'error'); }
     }
+    if (btn.dataset.act === 'share-link') shareSetupLink(document.getElementById('setup-link').value);
+    if (btn.dataset.act === 'paste-link') pasteInto(document.getElementById('connect-input'));
+    if (btn.dataset.act === 'connect') {
+      if (await connectFromLink(document.getElementById('connect-input').value)) showSettings();
+    }
   };
   form.onsubmit = async (e) => {
     e.preventDefault();
-    await db.saveSettings({ url: form.url.value.trim(), token: form.token.value.trim() });
+    await updateSettings({ url: form.url.value.trim(), token: form.token.value.trim(), recorder: form.recorder.value.trim() });
     toast('Saved');
     syncNow();
   };
+}
+
+// ---------- setup links ----------
+function appBaseUrl() {
+  return location.origin + location.pathname;
+}
+
+async function updateSettings(patch) {
+  settingsCache = { ...settingsCache, ...patch };
+  await db.saveSettings(settingsCache);
+}
+
+function recorderLabel() {
+  return settingsCache.recorder || `device-${(settingsCache.deviceId || '').slice(0, 6)}`;
+}
+
+async function pasteInto(input) {
+  try {
+    input.value = await navigator.clipboard.readText();
+  } catch {
+    input.focus();
+    toast('Long-press the box and choose Paste');
+  }
+}
+
+// Saves the connection from a setup link. Returns true if connected.
+async function connectFromLink(text, { fromUrl = false } = {}) {
+  const c = decodeConnect(text);
+  if (!c) {
+    if (!fromUrl) toast('That is not a valid setup link', 'error');
+    return false;
+  }
+  if (fromUrl && settingsCache.appliedLink === c.code) return false; // already applied
+  const same = settingsCache.url === c.url && settingsCache.token === c.token;
+  if (!same && settingsCache.url && !confirm('Replace the current sheet connection with the one from this link?')) {
+    await updateSettings({ appliedLink: c.code });
+    return false;
+  }
+  await updateSettings({ url: c.url, token: c.token, appliedLink: c.code });
+  toast(same ? 'Already connected to this sheet' : 'Connected to the sheet ✓');
+  syncNow();
+  return true;
+}
+
+async function shareSetupLink(link) {
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'PitchTracker setup link', text: 'Open this to set up PitchTracker, then Add to Home Screen:', url: link });
+      return;
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Setup link copied');
+  } catch {
+    const input = document.getElementById('setup-link');
+    input.select();
+    toast('Select the link and copy it');
+  }
 }
 
 // ---------- boot ----------
@@ -470,6 +560,11 @@ async function boot() {
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW registration failed', err));
   }
   persistence = await db.requestPersistence();
+  settingsCache = await db.getSettings();
+  if (!settingsCache.deviceId) await updateSettings({ deviceId: uuid() });
+  // The link stays in the address bar on purpose: iOS keeps it when the page is
+  // added to the Home Screen, so the installed app connects on first launch too.
+  if (location.hash.includes('connect=')) await connectFromLink(location.hash, { fromUrl: true });
   initSync();
   showHome();
 }
