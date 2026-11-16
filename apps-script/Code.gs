@@ -18,7 +18,7 @@ const HEADERS = [
   'id', 'game_id', 'recorded_at', 'inning', 'pa_number', 'pitch_number',
   'pitch_in_pa', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
   'pitcher_pitch_count', 'balls_before', 'strikes_before', 'pitch_type',
-  'zone', 'action', 'result', 'pa_end', 'deleted', 'synced_at',
+  'zone', 'action', 'result', 'pa_end', 'deleted', 'recorded_by', 'synced_at',
 ];
 
 function setup() {
@@ -28,7 +28,7 @@ function setup() {
   sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
   sheet.setFrozenRows(1);
   // Keep ids, game ids and jersey numbers as text (stops "2026-05-01" turning into a date).
-  ['id', 'game_id', 'batter_number'].forEach((h) => {
+  ['id', 'game_id', 'batter_number', 'recorded_by'].forEach((h) => {
     const col = HEADERS.indexOf(h) + 1;
     sheet.getRange(1, col, sheet.getMaxRows(), 1).setNumberFormat('@');
   });
@@ -38,9 +38,9 @@ function setup() {
   summary.clear();
   // Column letters: K pitcher, O pitch_type, P zone, Q action, T deleted
   const blocks = [
-    ['Pitches by pitcher and type', '=QUERY(Pitches!A:U, "select K, count(A) where T = false group by K pivot O", 1)'],
-    ['Batter action by pitch type', '=QUERY(Pitches!A:U, "select O, count(A) where T = false group by O pivot Q", 1)'],
-    ['Zone by pitch type', '=QUERY(Pitches!A:U, "select O, count(A) where T = false group by O pivot P", 1)'],
+    ['Pitches by pitcher and type', '=QUERY(Pitches!A:V, "select K, count(A) where T = false group by K pivot O", 1)'],
+    ['Batter action by pitch type', '=QUERY(Pitches!A:V, "select O, count(A) where T = false group by O pivot Q", 1)'],
+    ['Zone by pitch type', '=QUERY(Pitches!A:V, "select O, count(A) where T = false group by O pivot P", 1)'],
   ];
   blocks.forEach(([title, formula], i) => {
     const row = 1 + i * 12;

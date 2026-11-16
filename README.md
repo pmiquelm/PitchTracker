@@ -56,7 +56,17 @@ Share the *sheet* with viewers as usual. They never need the URL or the token.
 
 If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → New version** so the URL stays the same.
 
-### 4. Dashboard
+### 4. Add other people
+
+- **Viewers** don't need the app. In Google Sheets, use **Share → Anyone with the link → Viewer** and send them the sheet link.
+- **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email).
+  On their iPhone they open it in Safari, tap **Add to Home Screen**, and they're connected. Pitches go into the same sheet,
+  and the `recorded_by` column shows who recorded each one (from **Settings → Your name**, or a device id).
+  If the installed app ever opens without a connection, it shows a box to paste the setup link into.
+- The setup link contains the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
+  after deleting the `TOKEN` script property (Project Settings → Script properties). That creates a new token; then share a new link.
+
+### 5. Dashboard
 
 - The **Summary** tab has starter pivots: pitches by pitcher and type, batter action by pitch type, and zone by pitch type.
 - For a proper dashboard, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
@@ -81,6 +91,7 @@ If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → 
 | `result` | `ball`, `called_strike`, `swinging_strike`, `foul`, `in_play` |
 | `pa_end` | `walk`, `strikeout`, `in_play` or empty |
 | `deleted` | TRUE if undone in the app |
+| `recorded_by` | the recorder's name from Settings, or `device-xxxxxx` |
 | `synced_at` | when the sheet last received the row |
 
 ## Development
@@ -102,6 +113,7 @@ node tests/e2e.cjs /tmp/shots   # browser test; needs Playwright and the server 
 | `js/db.js` | local storage (IndexedDB). The only file to swap for SQLite if wrapped as a native app with Capacitor |
 | `js/sync.js` | upload queue to the Google Sheet |
 | `js/backup.js` | export/import of backup files and CSV |
+| `js/connect.js` | setup links (`#connect=…`) |
 | `js/app.js` | screens and UI |
 | `sw.js` | offline caching. **Bump `VERSION` whenever any app file changes**, or installed copies keep the old files |
 | `apps-script/Code.gs` | the Google Sheets receiver |

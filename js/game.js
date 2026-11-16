@@ -26,7 +26,7 @@ export const PITCH_COLUMNS = [
   'id', 'game_id', 'recorded_at', 'inning', 'pa_number', 'pitch_number',
   'pitch_in_pa', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
   'pitcher_pitch_count', 'balls_before', 'strikes_before', 'pitch_type',
-  'zone', 'action', 'result', 'pa_end', 'deleted',
+  'zone', 'action', 'result', 'pa_end', 'deleted', 'recorded_by',
 ];
 
 export function pitchResult(zone, action) {

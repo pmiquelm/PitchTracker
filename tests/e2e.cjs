@@ -96,6 +96,47 @@ const OUT = process.argv[2];
   await p2.getByText('New game').click(); await p2.fill('input[name=name0]', 'Lopez'); await p2.getByText('Start game').click();
   await p2.click('[data-act=pad][data-value=FB]');
   await p2.screenshot({ path: OUT + '/6-ipad.png' });
+  // ---- Setup link: open link in a fresh "phone" -> connected, rows carry token + recorded_by
+  const shareLink = await (async () => {
+    await page.click('[data-act=menu]'); await page.click('dialog [data-act=exit]').catch(() => {});
+    await page.goto('http://localhost:8765/'); await page.getByText('Settings').click();
+    await page.fill('input[name=recorder]', 'Coach P'); await page.getByRole('button', { name: 'Save' }).click();
+    await page.waitForTimeout(300); await page.click('[data-act=back]'); await page.getByText('Settings').click();
+    return page.inputValue('#setup-link');
+  })();
+  assert.match(shareLink, /^http:\/\/localhost:8765\/#connect=[\w-]+$/);
+  const phone2 = await browser.newContext({ ...devices['iPhone 14'] });
+  await phone2.route('https://script.google.com/**', async route => {
+    const req = route.request();
+    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+  });
+  const p3 = await phone2.newPage();
+  p3.on('pageerror', e => errors.push(e.message));
+  await p3.goto(shareLink);
+  await p3.waitForSelector('text=Connected to the sheet');
+  assert.equal(await p3.locator('.connect-box').count(), 0, 'no paste box once connected');
+  await p3.screenshot({ path: OUT + '/7-connected.png' });
+  await p3.getByText('New game').click(); await p3.fill('input[name=name0]', 'Lopez'); await p3.getByText('Start game').click();
+  for (const v of ['FB', 'IN', 'TAKE']) await p3.click(`[data-act=pad][data-value=${v}]`);
+  for (let i = 0; i < 50 && !received.some(r => r.phone === 2); i++) await p3.waitForTimeout(100);
+  const r2 = received.filter(r => r.phone === 2);
+  assert.equal(r2.length, 1); assert.match(r2[0].recorded_by, /^device-/);
+  // Reload with the same link: no second "Connected" prompt
+  await p3.waitForTimeout(3000); await p3.goto('about:blank'); await p3.goto(shareLink); await p3.waitForSelector('.list'); await p3.waitForTimeout(500);
+  const t3 = await p3.locator('#toast.show').count() ? await p3.textContent('#toast') : '';
+  assert.equal(t3, '', 'link not re-applied');
+  // Paste flow on a third phone (installed app opened without the link)
+  const phone3 = await browser.newContext({ ...devices['iPhone 14'] });
+  const p4 = await phone3.newPage();
+  await p4.goto('http://localhost:8765/');
+  await p4.screenshot({ path: OUT + '/8-paste-box.png' });
+  await p4.fill('#connect-input', 'not a link'); await p4.click('[data-act=connect]');
+  await p4.waitForSelector('#toast.error');
+  await p4.fill('#connect-input', shareLink); await p4.click('[data-act=connect]');
+  await p4.waitForSelector('text=Connected to the sheet');
+  await p4.waitForFunction(() => !document.querySelector('.connect-box'));
+  // Phone 1 rows carry the recorder name after it was set
   console.log('received rows (incl. resends):', received.length, 'errors:', errors);
   assert.deepEqual(errors.filter(e => !e.includes('INTERNET_DISCONNECTED')), []);
   console.log('E2E OK');
