@@ -7,6 +7,8 @@ The data goes into a Google Sheet that other people can open, filter and build d
 
 ## How it works
 
+> **In-depth guide:** [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) explains the whole system from first principles, with links to every relevant line of code.
+
 - **Three pads per pitch:** Pitch (Fastball / Curveball), Zone (In / Out) and Batter (Take / Swing / Foul / In play).
   The pitch is saved as soon as all three are chosen. Pads can be tapped in any order, and tapping a pad again unselects it.
 - **The count updates automatically.** A take in the zone is a called strike and a take out of the zone is a ball.
