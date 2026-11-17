@@ -94,15 +94,16 @@ without the token, which never goes in the repo. Treat `CLASPRC_JSON` like a pas
 Script projects. To cut it off, remove clasp's access at <https://myaccount.google.com/permissions> and delete the
 secret.
 
-The Action only replaces `Code.gs`. It stops without changing anything if your script project has other files, and it
-doesn't run `setup`: if the sheet's columns change, run `setup` by hand once after the deploy. If it starts failing
-with an authentication error, repeat step 2 and update `CLASPRC_JSON`.
+The Action only replaces `Code.gs`, and stops without changing anything if your script project has other files. At
+the end it checks the live script reports the new `VERSION`. You don't need to run `setup` after a deploy: if the
+columns changed, the first upload (or **Test connection**) moves the existing rows into the new layout by itself,
+after keeping a copy of the old tab. If it starts failing with an authentication error, repeat step 2 and update
+`CLASPRC_JSON`.
 
-**Updating from the one-team version:** paste the new `Code.gs`, run **`setup`** again, then *Manage deployments → Edit → New version*.
-`setup` keeps a copy of your old Pitches tab (*Pitches (before update …)*) and moves the existing rows into the new columns.
-Until the script is updated, the app keeps everything on the phone and shows *the sheet script is out of date*; nothing is lost.
-With **automatic script updates** (below), the new code is deployed for you, but you still have to open the Apps Script editor and
-run **`setup`** once: until then uploads are refused with *run setup() in the sheet script again* and wait on the phones.
+**Updating the script:** deploy the new `Code.gs` (automatically, see above, or paste it and use *Manage deployments →
+Edit → New version*). Nothing else to do: when the columns change, the first upload after the deploy keeps a copy of
+the old tab (*Pitches (before update …)*) and moves the existing rows into the new columns. Until the new script is
+live, the app keeps everything on the phone and shows *the sheet script is out of date*; nothing is lost.
 
 ### 3. Install it on the iPhone / iPad
 

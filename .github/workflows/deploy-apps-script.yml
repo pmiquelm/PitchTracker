@@ -78,6 +78,22 @@ jobs:
           $CLASP redeploy "$DEPLOYMENT_ID" --description "main ${GITHUB_SHA::7}" > /dev/null
           echo "Deployed ${GITHUB_SHA::7} to the existing web app deployment."
 
+      - name: Check the live script
+        run: |
+          # The web app answers GET with {"ok":true,"version":N}. Wait until it reports the
+          # VERSION in Code.gs, which confirms the deploy is live. The next upload from a
+          # phone then updates the sheet's columns by itself if they changed.
+          want=$(sed -nE 's/^const VERSION = ([0-9]+);.*/\1/p' apps-script/Code.gs)
+          [ -n "$want" ] || { echo "::error::No VERSION found in Code.gs"; exit 1; }
+          for i in 1 2 3 4 5 6; do
+            got=$(curl -sSL --max-time 30 "https://script.google.com/macros/s/$DEPLOYMENT_ID/exec" \
+              | sed -nE 's/.*"version":([0-9]+).*/\1/p' || true)
+            if [ "$got" = "$want" ]; then echo "Live script reports version $got."; exit 0; fi
+            sleep 10
+          done
+          echo "::error::The live script reports version '${got:-none}', expected $want. If Code.gs changed, was VERSION bumped?"
+          exit 1
+
       - name: Remove credentials
         if: always()
         run: rm -f ~/.clasprc.json

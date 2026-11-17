@@ -68,9 +68,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 2);
+  assert.equal(api.doGet().version, 3);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 2, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 3, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -79,16 +79,13 @@ test('fresh setup, then upserts into both sheets', () => {
   assert.equal(pa[api.PA_HEADERS.indexOf('fielder')], 'CF');
 });
 
-test('setup moves an old Pitches sheet to the new columns and keeps a copy', () => {
+test('setup (by hand) moves an old Pitches sheet to the new columns and keeps a copy', () => {
   const OLD = ['id', 'game_id', 'recorded_at', 'inning', 'pa_number', 'pitch_number',
     'pitch_in_pa', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
     'pitcher_pitch_count', 'balls_before', 'strikes_before', 'pitch_type',
     'zone', 'action', 'result', 'pa_end', 'deleted', 'recorded_by', 'synced_at'];
   const row = OLD.map((h) => `v-${h}`);
   const api = load({ Pitches: [OLD.slice(), row.slice()] });
-  // Before setup runs again, the new script refuses to write into the old layout
-  const refused = post(api, { rows: [{ id: 'x' }], pas: [] });
-  assert.equal(refused.ok, false);
   api.setup();
   const sheet = api.ss.getSheetByName('Pitches');
   assert.deepEqual(sheet.cells[0], api.HEADERS);
@@ -107,4 +104,42 @@ test('wrong token is refused', () => {
   const api = load();
   api.setup();
   assert.equal(api.doPost({ postData: { contents: JSON.stringify({ token: 'no', rows: [] }) } }).ok, false);
+});
+
+const OLD_HEADERS = ['id', 'game_id', 'recorded_at', 'inning', 'pa_number', 'pitch_number',
+  'pitch_in_pa', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
+  'pitcher_pitch_count', 'balls_before', 'strikes_before', 'pitch_type',
+  'zone', 'action', 'result', 'pa_end', 'deleted', 'recorded_by', 'synced_at'];
+
+test('after a deploy that changed the columns, the first upload updates the layout by itself', () => {
+  const row = OLD_HEADERS.map((h) => `v-${h}`);
+  // An old sheet as the previous script version left it: no PlateAppearances, old Summary.
+  const api = load({ Pitches: [OLD_HEADERS.slice(), row.slice()], Summary: [['old summary']] });
+  const res = post(api, { rows: [{ id: 'new', half: 'top' }], pas: [{ id: 'pa1', result: '1B' }] });
+  assert.equal(res.ok, true, res.error);
+  const sheet = api.ss.getSheetByName('Pitches');
+  assert.deepEqual(sheet.cells[0], api.HEADERS);
+  for (const h of OLD_HEADERS) assert.equal(sheet.cells[1][api.HEADERS.indexOf(h)], `v-${h}`, h);
+  assert.equal(sheet.cells[2][api.HEADERS.indexOf('half')], 'top', 'the upload itself landed in the new layout');
+  assert.equal(api.ss.getSheetByName('PlateAppearances').cells[1][api.PA_HEADERS.indexOf('result')], '1B');
+  assert.deepEqual(api.ss.sheets.find((s) => s.name.startsWith('Pitches (before update')).cells, [OLD_HEADERS, row]);
+  assert.match(String(api.ss.getSheetByName('Summary').cells[1][0]), /QUERY\(Pitches!A:AA/, 'Summary rebuilt');
+  // Later uploads don't touch the layout again
+  assert.equal(post(api, { rows: [{ id: 'later' }], pas: [] }).ok, true);
+  assert.equal(api.ss.sheets.filter((s) => s.name.startsWith('Pitches (before')).length, 1);
+});
+
+test('an empty upload (Test connection) also updates the layout', () => {
+  const api = load({ Pitches: [OLD_HEADERS.slice(), OLD_HEADERS.map(() => 'x')] });
+  assert.equal(post(api, { rows: [], pas: [] }).ok, true);
+  assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
+});
+
+test('unknown columns: upload refused with the reason, sheet left as it was', () => {
+  const cells = [[...OLD_HEADERS, 'my_notes'], [...OLD_HEADERS.map(() => 'x'), 'keep me']];
+  const api = load({ Pitches: cells.map((r) => r.slice()) });
+  const res = post(api, { rows: [{ id: 'y' }], pas: [] });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /unknown columns my_notes/);
+  assert.deepEqual(api.ss.getSheetByName('Pitches').cells, cells);
 });
