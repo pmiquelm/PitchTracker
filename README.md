@@ -74,11 +74,13 @@ game to the games list.
 ### 4. Add other people
 
 - **Viewers** don't need the app. In Google Sheets, use **Share → Anyone with the link → Viewer** and send them the sheet link.
-- **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email).
+- **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email),
+  or, in person, tap **Show QR code** and let them scan it with their phone's **Camera** app (it disappears after 60 seconds).
+  Before connecting, their phone shows a **sheet code** (like `K7Q-X2M`); check it matches the one in your Settings.
   On iPhone they open it in Safari, tap **Copy setup link**, **Add to Home Screen**, then **Paste & connect** in the new app. On Android they open it and tap **Install app**. Pitches go into the same sheet,
   and the `recorded_by` column shows who recorded each one (from **Settings → Your name**, or a device id).
   If the installed app ever opens without a connection, it shows a box to paste the setup link into.
-- The setup link contains the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
+- The setup link and QR code contain the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
   after deleting the `TOKEN` script property (Project Settings → Script properties). That creates a new token; then share a new link.
 
 ### 5. Dashboard

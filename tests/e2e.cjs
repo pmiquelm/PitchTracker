@@ -11,20 +11,22 @@ const OUT = process.argv[2];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   const received = [];
+  // Every new connection asks first and shows the sheet code
+  const accept = async (pg) => { await pg.waitForSelector('text=Connect to this sheet?'); await pg.click('dialog [data-act=yes]'); };
   let serverUp = true;
   await ctx.route('https://script.google.com/**', async route => {
     if (!serverUp) return route.abort('internetdisconnected');
     const req = route.request();
-    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret'); received.push(...b.rows); }
+    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows); }
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
   await page.goto('http://localhost:8765/');
   await page.locator('[data-act=settings]').click();
-  await page.fill('input[name=url]', 'https://script.google.com/macros/s/test/exec');
-  await page.fill('input[name=token]', 'secret');
+  await page.fill('input[name=url]', 'https://script.google.com/macros/s/AKfycbTestDeployment0123456789_abcdefghij/exec');
+  await page.fill('input[name=token]', 'secret-token-1');
   await page.getByRole('button', { name: 'Save' }).click();
   // In a browser tab, saving a connection puts the setup link in the address and reloads to home
-  await page.waitForURL(/#connect=/); await page.waitForSelector('text=New game');
+  await page.waitForURL(/#c=/); await page.waitForSelector('text=New game');
   const safariUrl = page.url();
   await page.getByText('New game').click();
   await page.fill('input[name=gameId]', '2026-11-16-HOME');
@@ -105,18 +107,40 @@ const OUT = process.argv[2];
     await page.fill('input[name=recorder]', 'Coach P'); await page.getByRole('button', { name: 'Save' }).click();
     await page.waitForTimeout(300); if (await page.locator('[data-act=back]').count()) await page.click('[data-act=back]');
     await page.locator('[data-act=settings]').click();
-    return page.inputValue('#setup-link');
+    // Settings: token hidden, link masked, sheet code shown, QR on request only
+    assert.equal(await page.getAttribute('input[name=token]', 'class'), 'secret');
+    assert.doesNotMatch(await page.textContent('main'), /secret-token-1/, 'token not shown as text');
+    await page.waitForFunction(() => /^[A-Z2-9]{3}-[A-Z2-9]{3}$/.test(document.getElementById('my-sheet-code')?.textContent));
+    const myCode = await page.textContent('#my-sheet-code');
+    assert.equal(await page.locator('svg.qr').count(), 0, 'no QR until asked');
+    await page.click('[data-act=show-qr]'); await page.waitForSelector('svg.qr');
+    assert.match(await page.textContent('dialog'), new RegExp(myCode));
+    await page.screenshot({ path: OUT + '/12-qr.png' });
+    await page.click('dialog [data-act=close]');
+    assert.equal(await page.locator('svg.qr').count(), 0, 'QR removed on close');
+    await page.click('[data-act=show-qr]'); await page.waitForSelector('svg.qr');
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    assert.equal(await page.locator('svg.qr').count(), 0, 'QR removed when the app leaves the screen');
+    await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); });
+    page.__sheetCode = myCode;
+    await page.click('[data-act=back]');
+    return page.url();
   })();
-  assert.match(shareLink, /^http:\/\/localhost:8765\/#connect=[\w-]+$/);
+  assert.match(shareLink, /^http:\/\/localhost:8765\/#c=[\w-]+\.[\w-]+$/);
+  assert.ok(shareLink.length < 120, 'short link');
   const phone2 = await browser.newContext({ ...devices['iPhone 14'] });
   await phone2.route('https://script.google.com/**', async route => {
     const req = route.request();
-    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
+    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
   const p3 = await phone2.newPage();
   p3.on('pageerror', e => errors.push(e.message));
   await p3.goto(shareLink);
+  await p3.waitForSelector('text=Connect to this sheet?');
+  assert.match(await p3.textContent('dialog .sheet-code'), new RegExp(page.__sheetCode), 'same sheet code on both phones');
+  await p3.screenshot({ path: OUT + '/13-confirm.png' });
+  await p3.click('dialog [data-act=yes]');
   await p3.waitForSelector('text=Connected to the sheet');
   assert.equal(await p3.locator('.connect-box').count(), 0, 'no paste box once connected');
   await p3.screenshot({ path: OUT + '/7-connected.png' });
@@ -136,7 +160,7 @@ const OUT = process.argv[2];
   await p4.screenshot({ path: OUT + '/8-paste-box.png' });
   await p4.fill('#connect-input', 'not a link'); await p4.click('[data-act=connect]');
   await p4.waitForSelector('#toast.error');
-  await p4.fill('#connect-input', shareLink); await p4.click('[data-act=connect]');
+  await p4.fill('#connect-input', shareLink); await p4.click('[data-act=connect]'); await accept(p4);
   await p4.waitForSelector('text=Connected to the sheet');
   await p4.waitForFunction(() => !document.querySelector('.connect-box'));
   // Phone 1 rows carry the recorder name after it was set
@@ -144,7 +168,7 @@ const OUT = process.argv[2];
   const installed = await browser.newContext({ ...devices['iPhone 14'] });
   await installed.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
   const p5 = await installed.newPage();
-  await p5.goto(safariUrl);
+  await p5.goto(safariUrl); await accept(p5);
   await p5.waitForSelector('text=Connected to the sheet');
   assert.equal(await p5.locator('.connect-box').count(), 0);
   assert.equal(await p5.locator('text=Install the app').count(), 0, 'no install notice inside the installed app');
@@ -157,16 +181,17 @@ const OUT = process.argv[2];
   await p6.waitForSelector('.connect-box'); assert.equal(p6.url(), 'http://localhost:8765/');
   // Clipboard hand-over: copy in the "Safari" tab, then Paste & connect in the installed app
   const hand = await browser.newContext({ ...devices['iPhone 14'], permissions: ['clipboard-read', 'clipboard-write'] });
-  const tab = await hand.newPage(); await tab.goto(shareLink); await tab.waitForSelector('[data-act=copy-link]');
+  const tab = await hand.newPage(); await tab.goto(shareLink); await accept(tab); await tab.waitForSelector('[data-act=copy-link]');
   await tab.click('[data-act=copy-link]'); await tab.waitForSelector('text=Setup link copied');
+  await tab.bringToFront();
   const copied = await tab.evaluate(() => navigator.clipboard.readText());
-  assert.match(copied, /#connect=/);
+  assert.match(copied, /#c=/);
   const inst = await browser.newContext({ ...devices['iPhone 14'], permissions: ['clipboard-read', 'clipboard-write'] });
   await inst.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
   const app2 = await inst.newPage(); await app2.goto('http://localhost:8765/');
   await app2.evaluate((t) => navigator.clipboard.writeText(t), copied);
   await app2.screenshot({ path: OUT + '/10-paste-connect.png' });
-  await app2.click('[data-act=paste-connect]');
+  await app2.click('[data-act=paste-connect]'); await accept(app2);
   await app2.waitForFunction(() => !document.querySelector('.connect-box'));
   await app2.locator('[data-act=settings]').click();
   assert.match(await app2.textContent('.facts'), /App version: v\d+/);
@@ -181,7 +206,7 @@ const OUT = process.argv[2];
   assert.equal(m.start_url, undefined, 'manifest must not pin start_url');
   // ---- Android: Chrome's install offer becomes an "Install app" button; Back in a game returns home
   const droid = await browser.newContext({ ...devices['Pixel 7'] });
-  const ad = await droid.newPage(); await ad.goto(shareLink); await ad.waitForSelector('text=New game');
+  const ad = await droid.newPage(); await ad.goto(shareLink); await accept(ad); await ad.waitForSelector('text=New game');
   assert.equal(await ad.locator('[data-act=copy-link]').count(), 0, 'no clipboard step on Android');
   await ad.evaluate(() => { const e = new Event('beforeinstallprompt'); e.prompt = () => {}; e.userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
   await ad.click('[data-act=install]'); await ad.waitForSelector('text=Installing');
@@ -193,6 +218,19 @@ const OUT = process.argv[2];
   await ad.getByText('New game').click(); await ad.fill('input[name=name0]', 'A'); await ad.getByText('Start game').click();
   assert.ok((await ad.textContent('.sync-badge')).length <= 9, 'compact badge');
   await ad.click('.sync-badge'); await ad.waitForSelector('text=Upload status');
+  // ---- Declining a link: not connected, and not asked again at every launch
+  const wary = await browser.newContext({ ...devices['iPhone 14'] });
+  const w = await wary.newPage(); await w.goto(shareLink);
+  await w.waitForSelector('text=Connect to this sheet?'); await w.click('dialog [data-act=close]');
+  await w.waitForSelector('.connect-box');
+  await w.goto('about:blank'); await w.goto(shareLink); await w.waitForSelector('.connect-box'); await w.waitForTimeout(500);
+  assert.equal(await w.locator('dialog[open]').count(), 0, 'declined link not asked again');
+  // ---- Content Security Policy is in force: the page cannot load outside scripts
+  const blocked = await w.evaluate(() => new Promise((resolve) => {
+    const s = document.createElement('script'); s.src = 'https://example.com/x.js';
+    s.onerror = () => resolve(true); s.onload = () => resolve(false); document.head.append(s);
+  }));
+  assert.ok(blocked, 'outside script blocked by CSP');
   console.log('received rows (incl. resends):', received.length, 'errors:', errors);
   assert.deepEqual(errors.filter(e => !e.includes('INTERNET_DISCONNECTED')), []);
   console.log('E2E OK');

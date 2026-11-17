@@ -270,3 +270,14 @@ dialog h2 { margin: 0 0 0.6rem; font-size: 1.2rem; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 #toast.pa-end { background: #1f7a4d; }
 #toast.error { background: #b42318; }
+
+/* ---- sharing ---- */
+.secret { -webkit-text-security: disc; } /* hide the token on screen without triggering password managers */
+.sheet-code { font: 700 2rem/1.1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; text-align: center; margin: 0.2rem 0 0.8rem; }
+.sheet-code.inline { font-size: 1.05rem; margin: 0; }
+.link-preview { font: 0.85rem ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.qr-box { background: #fff; border-radius: 12px; padding: 0.4rem; margin: 0 auto 0.5rem; width: min(72vw, 46vh, 320px); }
+.qr { display: block; width: 100%; height: auto; }
+.center { text-align: center; }
+.qr-rules { padding-left: 1.1rem; margin: 0.4rem 0; }
+.qr-rules li { margin: 0.25rem 0; }
