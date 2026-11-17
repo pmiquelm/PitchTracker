@@ -14,6 +14,10 @@ let current = null; // { game, events, state }
 let sel = { pitchType: null, zone: null, action: null };
 let persistence = 'unknown';
 let settingsCache = {}; // { url, token, recorder, deviceId, appliedLink }
+let updateReady = false;  // a new version has taken over; reload at the next safe moment
+// How this launch was opened, with any token hidden. Shown in Settings to diagnose installs.
+const launchAddress = location.origin + location.pathname
+  + (location.search ? '?…' : '') + (location.hash.includes('connect=') ? '#connect=…' : location.hash);
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -65,6 +69,7 @@ function openDialog(html, onClick) {
 async function showHome() {
   app.classList.remove('tracker-mode');
   current = null;
+  if (updateReady) { location.reload(); return; }
   const games = await db.listGames();
   app.innerHTML = `
     <header class="bar">
@@ -72,16 +77,25 @@ async function showHome() {
       ${badgeHTML()}
     </header>
     <main class="page">
-      ${isStandalone() ? '' : `<div class="notice">
-        <strong>Install the app:</strong> ${settingsCache.url ? 'now that the sheet is connected, ' : ''}tap <em>Share</em> → <em>Add to Home Screen</em>, then open it from there.
-        Data is only kept safely when it runs as an installed app.</div>`}
-      ${persistence === 'not-persisted' && isStandalone() ? '<div class="notice">Storage is not marked persistent yet. Install to the home screen and reopen the app.</div>' : ''}
+      ${isStandalone() ? '' : settingsCache.url ? `<div class="notice">
+        <strong>Install on this phone</strong>
+        <ol class="steps">
+          <li><button class="primary" data-act="copy-link">Copy setup link</button></li>
+          <li>Tap <em>Share</em> → <em>Add to Home Screen</em>.</li>
+          <li>Open the new icon. If it isn't connected, tap <em>Paste &amp; connect</em>.</li>
+        </ol>
+        Data is only kept safely in the installed app.</div>` : `<div class="notice">
+        <strong>Install the app:</strong> connect the sheet first (below, or in <em>Settings</em>), then tap
+        <em>Share</em> → <em>Add to Home Screen</em> and open it from there.</div>`}
+      ${persistence === 'not-persisted' && isStandalone() ? '<div class="notice">Storage is not marked persistent yet. Close the app fully and reopen it; iOS usually grants it after that.</div>' : ''}
       ${settingsCache.url ? '' : `<div class="connect-box">
         <strong>Connect to the team sheet</strong>
-        <p class="muted small">Paste the setup link you were sent. If you set the sheet up in Safari, get it there from
-          <em>Settings → Share setup link</em>.</p>
+        <p class="muted small">Copy the setup link first: from the message you were sent, or in Safari with
+          <em>Copy setup link</em> on the app's home screen.</p>
+        <button class="big primary" data-act="paste-connect">Paste &amp; connect</button>
+        <p class="muted small">Or paste it here yourself:</p>
         <input id="connect-input" placeholder="https://…#connect=…" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <div class="row-buttons"><button data-act="paste-link">Paste</button><button class="primary" data-act="connect">Connect</button></div>
+        <div class="row-buttons"><button data-act="connect">Connect</button></div>
       </div>`}
       <button class="big primary" data-act="new">＋ New game</button>
       <h2>Games</h2>
@@ -106,6 +120,8 @@ async function showHome() {
     else if (act === 'settings') showSettings();
     else if (act === 'sync') syncNow();
     else if (act === 'paste-link') pasteInto(document.getElementById('connect-input'));
+    else if (act === 'paste-connect') pasteAndConnect();
+    else if (act === 'copy-link') copySetupLink();
     else if (act === 'connect') {
       connectFromLink(document.getElementById('connect-input').value).then(async (ok) => {
         if (!ok) return;
@@ -471,8 +487,11 @@ async function showSettings() {
         <li>Last sync: ${s.lastSync ? new Date(s.lastSync).toLocaleString() : 'not this session'}</li>
         <li>Installed as app: ${isStandalone() ? 'yes' : '<strong>no</strong> — add to Home Screen'}</li>
         <li>Persistent storage: ${esc(persistence)}</li>
+        <li>App version: <span id="app-version">…</span></li>
+        <li>Opened at: <code class="small">${esc(launchAddress)}</code></li>
       </ul>
     </main>`;
+  appVersion().then((v) => { const el = document.getElementById('app-version'); if (el) el.textContent = v; });
   const form = document.getElementById('settings');
   app.onclick = async (e) => {
     const btn = e.target.closest('[data-act]');
@@ -559,6 +578,43 @@ async function keepLinkInAddress() {
   return true;
 }
 
+async function appVersion() {
+  try {
+    const keys = (await caches.keys()).filter((k) => k.startsWith('pitchtracker-'));
+    return keys.map((k) => k.slice('pitchtracker-'.length)).join(', ') || 'not cached yet';
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Safari side of the hand-over: put this phone's setup link on the clipboard.
+async function copySetupLink() {
+  const link = buildSetupLink(appBaseUrl(), settingsCache);
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Setup link copied. Now Share → Add to Home Screen');
+  } catch {
+    toast('Could not copy. Use Settings → Share setup link', 'error');
+  }
+}
+
+// Installed-app side: read the link from the clipboard and connect, in one tap.
+// iOS shows a small "Paste" bubble to confirm reading the clipboard.
+async function pasteAndConnect() {
+  const input = document.getElementById('connect-input');
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    input?.focus();
+    toast('Long-press the box below and choose Paste, then Connect');
+    return;
+  }
+  if (input) input.value = text;
+  if (!(await connectFromLink(text))) return;
+  if (await keepLinkInAddress()) location.reload(); else showHome();
+}
+
 async function shareSetupLink(link) {
   try {
     if (navigator.share) {
@@ -581,6 +637,14 @@ async function shareSetupLink(link) {
 // ---------- boot ----------
 async function boot() {
   if ('serviceWorker' in navigator) {
+    // When a new version finishes installing it takes over (sw.js). Reload so it's
+    // used straight away, except during a game: then wait until back on the home screen.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || updateReady) return; // first install: nothing old to replace
+      updateReady = true;
+      if (!current) location.reload();
+    });
     navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW registration failed', err));
   }
   persistence = await db.requestPersistence();
@@ -598,6 +662,15 @@ async function boot() {
   } catch { /* ignore */ }
 }
 
-window.addEventListener('error', (e) => toast(`Error: ${esc(e.message)}`, 'error'));
+window.addEventListener('error', (e) => {
+  // Errors from scripts that aren't the app's own (Safari's share sheet, browser
+  // extensions) arrive as a bare "Script error." with no file. They don't affect
+  // the app, so don't show them.
+  if (!e.filename || !e.filename.startsWith(location.origin)) {
+    console.warn('Ignored error from outside the app:', e.message);
+    return;
+  }
+  toast(`Error: ${esc(e.message)}`, 'error');
+});
 window.addEventListener('unhandledrejection', (e) => toast(`Error: ${esc(e.reason?.message || e.reason)}`, 'error'));
 boot();

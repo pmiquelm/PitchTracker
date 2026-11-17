@@ -164,7 +164,7 @@ With those, **Add to Home Screen** gives the site its own icon. It then opens wi
 
 These rules shaped several design decisions:
 
-- **The 7-day rule.** Safari deletes a website's stored data if you haven't visited it for 7 days. Apps added to the Home Screen are **exempt**: their data stays. That is why the app nags you to install it ([`js/app.js:75`](../js/app.js#L75)).
+- **The 7-day rule.** Safari deletes a website's stored data if you haven't visited it for 7 days. Apps added to the Home Screen are **exempt**: their data stays. That is why the app nags you to install it ([`js/app.js:80`](../js/app.js#L80)).
 - **Space pressure.** If the phone is almost full, iOS may clear data from websites that haven't been granted **persistent storage**. The app asks for it on every launch with `navigator.storage.persist()` ([`js/db.js:45`](../js/db.js#L45)). Settings shows whether it was granted.
 - **Separate storage.** A Home Screen app has its **own** storage, separate from Safari's, and it starts **empty**. Something saved while the page is open in Safari isn't visible to the installed app, and vice versa. This is why setup links are built the way they are (section 8.4), and why the backup/import buttons exist.
 - **No reliable background work.** iOS doesn't let web apps upload in the background after you close them. Uploads happen while the app is open (section 6.2).
@@ -236,19 +236,19 @@ sequenceDiagram
 
 ### 3.1 Opening the app: `boot`
 
-When the app opens, the browser loads `index.html`, which loads `js/app.js`. The last line of that file calls [`boot`](../js/app.js#L582), which:
+When the app opens, the browser loads `index.html`, which loads `js/app.js`. The last line of that file calls [`boot`](../js/app.js#L638), which:
 
 1. **Registers the service worker** so app files get cached (section 10).
 2. **Asks for persistent storage** ([`requestPersistence`](../js/db.js#L45)).
 3. **Loads the settings** (sheet address, token, your name) into memory, and gives this phone a random **device ID** the first time.
-4. **Checks the address for a setup link** (`#connect=…`) and applies it if it's new ([line 591](../js/app.js#L591), section 8).
-5. **In a browser tab only:** if the phone is connected but the address doesn't hold the setup link yet, puts it there and reloads once ([line 497](../js/app.js#L497), section 8.4). Inside the installed app this step does nothing.
+4. **Checks the address for a setup link** (`#connect=…`) and applies it if it's new ([line 655](../js/app.js#L655), section 8).
+5. **In a browser tab only:** if the phone is connected but the address doesn't hold the setup link yet, puts it there and reloads once ([line 656](../js/app.js#L656), section 8.4). Inside the installed app this step does nothing.
 6. **Starts the sync engine** ([`initSync`](../js/sync.js#L83)), which immediately tries to upload anything left over.
-7. **Shows the home screen** ([`showHome`](../js/app.js#L65)): the list of games, sorted newest first.
+7. **Shows the home screen** ([`showHome`](../js/app.js#L69)): the list of games, sorted newest first.
 
 ### 3.2 Starting a game: `showSetup`
 
-**New game** opens [`showSetup`](../js/app.js#L132): a game ID (pre-filled with today's date), an optional starting pitcher, and nine lineup rows of number + name. On **Start game**, the form is read, empty rows are skipped, and a **game record** is saved:
+**New game** opens [`showSetup`](../js/app.js#L148): a game ID (pre-filled with today's date), an optional starting pitcher, and nine lineup rows of number + name. On **Start game**, the form is read, empty rows are skipped, and a **game record** is saved:
 
 ```json
 {
@@ -264,22 +264,22 @@ The game has two identifiers on purpose. `gameId` is yours: readable, and used t
 
 ### 3.3 The tracker screen: `showTracker` and `renderTracker`
 
-[`showTracker`](../js/app.js#L180) loads the game and **all of its events** from IndexedDB, then runs `replay` (2.12) to compute the current state: count, batter, inning, pitch counts. [`renderTracker`](../js/app.js#L222) then draws the whole screen from that state: the count and dots, the batter bar, the three groups of pads, and the bottom buttons.
+[`showTracker`](../js/app.js#L196) loads the game and **all of its events** from IndexedDB, then runs `replay` (2.12) to compute the current state: count, batter, inning, pitch counts. [`renderTracker`](../js/app.js#L238) then draws the whole screen from that state: the count and dots, the batter bar, the three groups of pads, and the bottom buttons.
 
 ### 3.4 Tapping the pads: `handleTrackerClick`
 
-Each tap goes to [`handleTrackerClick`](../js/app.js#L265). For a pad, it records your choice in a small variable `sel` (one choice per group; tapping a selected pad again clears it). When all three groups have a choice ([line 272](../js/app.js#L272)), it clears `sel` and calls `recordPitch`.
+Each tap goes to [`handleTrackerClick`](../js/app.js#L281). For a pad, it records your choice in a small variable `sel` (one choice per group; tapping a selected pad again clears it). When all three groups have a choice ([line 288](../js/app.js#L288)), it clears `sel` and calls `recordPitch`.
 
-Taps are handled **one at a time, in order** ([line 259](../js/app.js#L259)): each tap waits for the previous one to finish. Without that, a very fast double tap could start two saves at once and they could interleave.
+Taps are handled **one at a time, in order** ([line 275](../js/app.js#L275)): each tap waits for the previous one to finish. Without that, a very fast double tap could start two saves at once and they could interleave.
 
 ### 3.5 Saving the pitch: `recordPitch` and `addEvent`
 
-[`recordPitch`](../js/app.js#L298) calls [`addEvent`](../js/app.js#L193), the single place where anything gets recorded. For a pitch it:
+[`recordPitch`](../js/app.js#L314) calls [`addEvent`](../js/app.js#L209), the single place where anything gets recorded. For a pitch it:
 
 1. Creates the event: a new UUID, the game key, a sequence number (one more than the highest so far), the type `pitch`, your three choices, and a timestamp.
-2. Builds the **sheet row** with [`buildPitchRow`](../js/game.js#L139) ([line 199](../js/app.js#L199)). The row is computed from the state *before* the pitch: who was batting, the count before, pitch number in the at-bat, and so on. Then it stamps `recorded_by` (your name or device ID).
+2. Builds the **sheet row** with [`buildPitchRow`](../js/game.js#L139) ([line 215](../js/app.js#L215)). The row is computed from the state *before* the pitch: who was batting, the count before, pitch number in the at-bat, and so on. Then it stamps `recorded_by` (your name or device ID).
 3. Marks it `dirty: 1` ("not uploaded yet").
-4. **Writes it to IndexedDB and waits until the write is on disk** ([line 203](../js/app.js#L203)). This is the most important line in the app. Nothing on screen changes until it has finished.
+4. **Writes it to IndexedDB and waits until the write is on disk** ([line 219](../js/app.js#L219)). This is the most important line in the app. Nothing on screen changes until it has finished.
 5. Adds it to the in-memory list and replays to get the new state.
 
 Then `recordPitch` writes the "Last: …" line (e.g. *Last: Fastball · In · Take → Called strike*), refreshes the not-uploaded count, and asks sync to run in 0.3 seconds. The screen redraws with the new count, or the next batter if the at-bat ended.
@@ -470,9 +470,9 @@ Every operation goes through [`run`](../js/db.js#L32): open a transaction on one
 
 ### 5.5 Undo and "tombstones"
 
-[`undo`](../js/app.js#L322) treats pitches and other events differently:
+[`undo`](../js/app.js#L338) treats pitches and other events differently:
 
-- An undone **pitch** is not deleted. It's marked `deleted = 1`, `row.deleted = true`, `dirty = 1` and `rev + 1`, then saved ([line 327](../js/app.js#L327)). This marker is called a **tombstone**. It's needed because the pitch may already be in the sheet, and the sheet has to be told: the next sync sends the row again with `deleted = TRUE`. The sheet keeps the row but marks it, and the Summary tab and dashboards filter it out.
+- An undone **pitch** is not deleted. It's marked `deleted = 1`, `row.deleted = true`, `dirty = 1` and `rev + 1`, then saved ([line 343](../js/app.js#L343)). This marker is called a **tombstone**. It's needed because the pitch may already be in the sheet, and the sheet has to be told: the next sync sends the row again with `deleted = TRUE`. The sheet keeps the row but marks it, and the Summary tab and dashboards filter it out.
 - An undone **substitution, pitcher change, inning change or next batter** never went to the sheet, so it is simply deleted.
 
 Either way the app replays and the screen is correct again.
@@ -536,7 +536,7 @@ So `markClean` only marks an event clean **if its `rev` is still the one that wa
 
 ### 6.5 The badge
 
-[`badgeHTML`](../js/app.js#L37) shows one of:
+[`badgeHTML`](../js/app.js#L41) shows one of:
 
 | Badge | Meaning |
 |---|---|
@@ -549,7 +549,7 @@ Any change in sync status updates every badge on screen right away ([`onSyncStat
 
 ### 6.6 Leaving a game with pending pitches
 
-**☰ → Exit to games list** warns you if anything is pending ([line 429](../js/app.js#L429)). It's only a warning: pending pitches stay safe on the phone and upload whenever the app is next open with signal, whichever screen it's on.
+**☰ → Exit to games list** warns you if anything is pending ([line 445](../js/app.js#L445)). It's only a warning: pending pitches stay safe on the phone and upload whenever the app is next open with signal, whichever screen it's on.
 
 ---
 
@@ -623,7 +623,7 @@ Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create
 
 ## 8. Setup links
 
-How someone else's phone gets connected to your sheet without typing anything. The code is in [`js/connect.js`](../js/connect.js), and the part in [`js/app.js` from line 503](../js/app.js#L503).
+How someone else's phone gets connected to your sheet without typing anything. The code is in [`js/connect.js`](../js/connect.js), and the part in [`js/app.js` from line 522](../js/app.js#L522).
 
 ### 8.1 What a link looks like
 
@@ -639,41 +639,48 @@ The part of an address after `#` is the **fragment**. Browsers **never send it t
 
 ### 8.3 Opening a link
 
-At startup, `boot` sees `connect=` in the address and calls [`connectFromLink`](../js/app.js#L527):
+At startup, `boot` sees `connect=` in the address and calls [`connectFromLink`](../js/app.js#L546):
 
 1. [`decodeConnect`](../js/connect.js#L35) unpacks it and **validates** it: version 1, a non-empty token, and an address that is `https://script.google.com`. A link pointing anywhere else is rejected, so a tampered link can't send your pitches to someone else's server.
-2. If this exact link was already applied on this phone, it's ignored ([line 533](../js/app.js#L533)). That matters because the link stays in the address (8.4) and is seen at every launch.
-3. If the phone is already connected to a **different** sheet, it asks before replacing it ([line 535](../js/app.js#L535)).
+2. If this exact link was already applied on this phone, it's ignored ([line 552](../js/app.js#L552)). That matters because the link stays in the address (8.4) and is seen at every launch.
+3. If the phone is already connected to a **different** sheet, it asks before replacing it ([line 554](../js/app.js#L554)).
 4. It saves the address and token, shows *Connected to the sheet ✓*, and starts a sync.
 
 ### 8.4 The iPhone Home Screen problem
 
-This is the trickiest part of the app, and it was found the hard way: the first version lost its connection on install.
+This is the trickiest part of the app, and it took three attempts.
 
-**The problem.** An app added to the Home Screen gets its **own storage, and it starts empty** (2.8). Whatever you set up in Safari (the sheet address, the token, your name) stays behind in Safari's copy. The first version of the app also fixed the address the installed app opens at (`start_url: "./"` in the manifest), so iOS always opened the bare address and nothing could ride along.
+**The problem.** An app added to the Home Screen gets its **own storage, and it starts empty** (2.8). Whatever you set up in Safari (the sheet address, the token, your name) stays behind in Safari's copy. The installed app has to be given the connection again, and the only things that can cross from Safari to the installed app are **the page address** at the moment you tap *Add to Home Screen*, and **the clipboard**.
 
-**The idea.** The one thing that *does* carry over from Safari to the installed app is the **address** the page was at when you tapped **Add to Home Screen**. So the connection travels in the address, as a setup link.
+**Attempt 1: nothing.** The first version did nothing special, and its manifest also fixed the start address (`start_url: "./"`), so the installed app always opened the bare address. The connection was lost on every install.
 
-**How it's done:**
+**Attempt 2: carry the link in the address.** The app keeps its setup link in Safari's address bar, and the manifest no longer sets `start_url`, so iOS should save the address as it is, link included:
 
-1. **The manifest has no `start_url`** ([`manifest.webmanifest`](../manifest.webmanifest)). Without one, the standard rule is that the installed app opens at the address the page had when it was installed. `"id": "./"` keeps the app's identity the same however that address varies.
-2. **In a browser tab, a connected app keeps its setup link in the address bar** ([`keepLinkInAddress`](../js/app.js#L553)). It runs at startup, after **Save** in Settings, and after connecting with a pasted link. If the address doesn't already end in this phone's `#connect=…` link, it writes it there and **reloads once**, so the page is loaded fresh from that address, in case iOS reads the address at load time rather than at install time. It also records the link as already applied, so the reload doesn't greet you with *Connected to the sheet* again. The confirmation message is carried across the reload instead.
-3. **Inside the installed app it does nothing.** It never rewrites its own address, so there's no reload loop.
-4. **The installed app connects itself.** It opens at the saved address, `boot` finds `#connect=…`, and `connectFromLink` saves the connection into the installed app's own storage, exactly as when opening a link someone sent you.
+- In a browser tab, a connected app writes its setup link into the address ([`keepLinkInAddress`](../js/app.js#L572)) at startup, after **Save** in Settings, and after connecting with a link, and reloads once so the page loads fresh from that address. It records the link as already applied, so the reload doesn't greet you with *Connected* again.
+- Inside the installed app it does nothing, so there's no reload loop.
+- If the installed app opens at that address, `boot` finds `#connect=…` and connects it, exactly as when opening a link someone sent you.
 
-The resulting rule for setting up a phone: **connect first (in Safari), then Add to Home Screen.**
+On a real iPhone this **didn't work** the first time it was tried. One reason is certain: the phone was still running the *previous* version from its offline cache (10.2), which didn't do any of this. Whether iOS keeps the `#…` part of the address at all is not known yet. **Settings → Status → Opened at** now shows the address the installed app was opened at (token hidden), which answers that the next time it's tried.
 
-**Fallback: the paste box.** For an app installed the other way round, or if some iOS version ignores the address, the home screen of an unconnected app shows *Connect to the team sheet*: a field and a **Paste** button ([`pasteInto`](../js/app.js#L517)). Get the link from Safari (**Settings → Share setup link**), paste, tap **Connect**. Once connected, an installed app stays connected; the setup only has to cross over once.
+**Attempt 3: the clipboard hand-over, which doesn't depend on iOS.** It costs two taps:
 
-What's tested: the browser test (15.1) simulates exactly this. It saves a connection in one "Safari" context, takes the address it ends up at, and opens that address in a separate "installed app" context with empty storage, which must come up connected with no input. What can't be tested outside a real iPhone is iOS's own handling of a manifest without `start_url`, which is why the paste box stays.
+1. In Safari, a connected app's home screen shows *Install on this phone* with a **Copy setup link** button ([`copySetupLink`](../js/app.js#L591)).
+2. You tap *Share → Add to Home Screen*.
+3. In the new app, the unconnected home screen shows a big **Paste & connect** button ([`pasteAndConnect`](../js/app.js#L603)). It reads the clipboard; iOS asks for permission with a small *Paste* bubble, and then the app connects.
+
+If reading the clipboard is refused, the box underneath still lets you long-press, paste and tap **Connect** ([`pasteInto`](../js/app.js#L536)). Once connected, an installed app stays connected; this only has to happen once per phone.
+
+Attempt 2 is kept. If iOS does keep the address, the installed app connects with no taps at all, and the paste button is simply never needed.
+
+What the browser test (15.1) covers: saving a connection in a "Safari" context puts the link in the address; a separate "installed app" context with empty storage, opened at that address, connects by itself; an installed app opened at the bare address shows the paste box; **Copy setup link** puts the link on the clipboard; and **Paste & connect** connects from it. What only a real iPhone can show is how iOS treats the address.
 
 ### 8.5 Making and sharing a link
 
-**Settings → Share setup link** builds the link from the phone's current connection ([`buildSetupLink`](../js/connect.js#L50)) and opens the share sheet ([`shareSetupLink`](../js/app.js#L562)). On devices without a share sheet, it copies the link instead.
+**Settings → Share setup link** builds the link from the phone's current connection ([`buildSetupLink`](../js/connect.js#L50)) and opens the share sheet ([`shareSetupLink`](../js/app.js#L618)). On devices without a share sheet, it copies the link instead.
 
 ### 8.6 Telling recorders apart
 
-Every row has `recorded_by`: the name from **Settings → Your name**, or `device-` plus the first characters of the phone's random device ID ([`recorderLabel`](../js/app.js#L513)). Changing your name affects new pitches only.
+Every row has `recorded_by`: the name from **Settings → Your name**, or `device-` plus the first characters of the phone's random device ID ([`recorderLabel`](../js/app.js#L532)). Changing your name affects new pitches only.
 
 ---
 
@@ -718,11 +725,20 @@ This is **cache-first**: once installed, the app never waits for the network to 
 
 ### 10.2 Updates
 
-Cache-first raises a question: how does a new version ever arrive? Every time the app opens with signal, the browser quietly checks whether `sw.js` itself has changed. If it has (and `VERSION` is how we change it), the new service worker installs alongside, downloading all the new files, and takes over. The **next** time the app is opened, it runs the new version.
+Cache-first raises a question: how does a new version ever arrive? Every time the app opens with signal, the browser quietly checks whether `sw.js` itself has changed. If it has (and `VERSION` is how we change it), the new service worker installs alongside, downloading all the new files, and takes over.
 
-So:
+At that moment the page on screen is still running the **old** code it was loaded with. The first versions of the app left it that way, so a new version only ran from the *next* launch. That caused real confusion: after an update was released, opening the app once still showed the old behaviour (8.4).
 
-- An update never interrupts a game in progress; it applies on the next launch.
+So now `boot` listens for the moment a new version takes over ([line 643](../js/app.js#L643)):
+
+- **Not in a game:** the app reloads straight away into the new version, a second or two after opening.
+- **In a game:** nothing happens until you go back to the games list; [`showHome`](../js/app.js#L69) then reloads. An update never interrupts recording.
+- **On the very first visit** there is no old version to replace, so there's no reload.
+
+**Settings → Status → App version** shows which version is cached on the phone (`v4`, `v5`…).
+
+Rules for making changes:
+
 - **Every change to any app file must bump `VERSION`** in `sw.js`. Otherwise `sw.js` is unchanged, no update is noticed, and installed phones keep the old files forever. This rule is written in [`CLAUDE.md`](../CLAUDE.md).
 - A new file must also be added to `ASSETS`, or it won't be available offline.
 
@@ -736,21 +752,23 @@ Your data isn't in the service worker's cache. It's in IndexedDB (section 5), wh
 
 | Screen | Function | What's on it |
 |---|---|---|
-| Home | [`showHome`](../js/app.js#L65) | Install notice, *Connect to the team sheet* box (if not connected), New game, list of games, Settings, Import backup |
-| New game | [`showSetup`](../js/app.js#L132) | Game ID, starting pitcher, 9 lineup rows |
-| Tracker | [`renderTracker`](../js/app.js#L222) | Menu, inning − / +, count, sync badge; batter bar with *Last:* line; three pad groups; Undo / Next batter / Lineup / Log |
-| Lineup / Subs | [`showLineupDialog`](../js/app.js#L344) | All slots editable (a changed name is a substitution), current-batter selector, pitcher |
-| Log | [`showLogDialog`](../js/app.js#L386) | Every plate appearance, newest first, with each pitch and how it ended |
-| Menu | [`showMenu`](../js/app.js#L406) | Pending count, Back up, Export CSV, Sync now, Exit |
-| Settings | [`showSettings`](../js/app.js#L437) | Sheet address, token, your name, Test connection, Share setup link, Use a setup link, Status |
+| Home | [`showHome`](../js/app.js#L69) | *Install on this phone* with **Copy setup link** (in Safari), *Connect to the team sheet* with **Paste & connect** (if not connected), New game, list of games, Settings, Import backup |
+| New game | [`showSetup`](../js/app.js#L148) | Game ID, starting pitcher, 9 lineup rows |
+| Tracker | [`renderTracker`](../js/app.js#L238) | Menu, inning − / +, count, sync badge; batter bar with *Last:* line; three pad groups; Undo / Next batter / Lineup / Log |
+| Lineup / Subs | [`showLineupDialog`](../js/app.js#L360) | All slots editable (a changed name is a substitution), current-batter selector, pitcher |
+| Log | [`showLogDialog`](../js/app.js#L402) | Every plate appearance, newest first, with each pitch and how it ended |
+| Menu | [`showMenu`](../js/app.js#L422) | Pending count, Back up, Export CSV, Sync now, Exit |
+| Settings | [`showSettings`](../js/app.js#L453) | Sheet address, token, your name, Test connection, Share setup link, Use a setup link, Status (including *App version* and *Opened at*) |
 
 ### 11.2 How screens are drawn
 
 There's no framework (React and the like). Each screen function builds the screen as one piece of HTML text from the current state and puts it in the page, replacing what was there. Taps are caught by a single click handler per screen that reads a `data-act` label on the tapped button ("pad", "undo", "lineup"…). It's simple and fast enough: redrawing the tracker takes far less time than a tap.
 
-Anything that came from a person (player names, game IDs) passes through [`esc`](../js/app.js#L19) before going into the HTML, which neutralises characters like `<` and `"`. Without it, a player named `<img src=x onerror=…>` could run code (12.3).
+Anything that came from a person (player names, game IDs) passes through [`esc`](../js/app.js#L23) before going into the HTML, which neutralises characters like `<` and `"`. Without it, a player named `<img src=x onerror=…>` could run code (12.3).
 
-Dialogs (Lineup, Log, Menu) use the browser's built-in `<dialog>` element ([`openDialog`](../js/app.js#L49)); tapping outside closes them.
+Errors in the app's own code show up as a red *Error: …* message, so problems aren't silent. Errors from scripts that aren't the app's own (Safari's share sheet, browser extensions) arrive as a bare *Script error.* with no file name; those are ignored ([line 665](../js/app.js#L665)). Before that filter existed, pressing Safari's Share button showed a confusing *Error: Script error.*
+
+Dialogs (Lineup, Log, Menu) use the browser's built-in `<dialog>` element ([`openDialog`](../js/app.js#L53)); tapping outside closes them.
 
 ### 11.3 Layout
 
@@ -813,12 +831,13 @@ The sheet holds player names and jersey numbers, plus the names recorders type. 
 | Wrong batter shown (missed an at-bat) | **Lineup / Subs** → pick the right batter | Yes |
 | Wrong token / script changed | Badge shows the error; pitches stay pending. Fix Settings, they upload | Yes |
 | Script redeployed as a *new* deployment | The address changes; phones keep failing. Update the address in Settings (or send a new link) | Yes, pending on phones |
-| Installed app opens without a connection | Added to the Home Screen before connecting, or iOS dropped the link (8.4). Pitches are kept as pending | Yes. Paste the setup link into the box; they upload |
+| Installed app opens without a connection | iOS didn't carry the address over (8.4). Pitches are kept as pending | Yes. **Paste & connect** after copying the link in Safari; they upload |
 | App opened in Safari instead of from the icon | Works, but it's a separate copy with its own storage, and Safari may clear it after 7 days unused. The app warns you | Upload what's there, then use the icon |
 | Website data cleared, or the app's icon deleted | The phone's copy of the data is gone | Uploaded data is in the sheet; pending pitches only if backed up |
 | Two phones record the same game | Both upload; rows are told apart by `recorded_by`. Each phone has its own count and order, so they don't sync with each other | Yes, but you'd have double pitches |
 | Google has an outage | Like no signal | Yes |
-| A new app version is released mid-game | Nothing changes until the app is next opened | Yes |
+| A new app version is released mid-game | Nothing changes until you go back to the games list; then the app reloads into the new version (10.2) | Yes |
+| *Error: Script error.* when pressing Share | Came from Safari's own scripts, not the app; now hidden (11.2) | Yes |
 
 ---
 
@@ -836,7 +855,7 @@ The sheet holds player names and jersey numbers, plus the names recorders type. 
 | No deleting games on the phone | Old games stay in the list | Add an archive or delete (only for fully uploaded games) |
 | Two phones on one game don't share state | Each keeps its own | Would need a real backend (e.g. Supabase) |
 | Apps Script limits | Google limits how many script runs an account gets per day and how many run at once. A game is a few hundred pitches in batches; nowhere near | Move to a database if it ever matters |
-| iOS Home Screen link behaviour | Simulated in tests; real-iPhone behaviour of a manifest without `start_url` still to confirm (8.4) | The paste box covers it either way |
+| iOS Home Screen address | Unknown whether iOS keeps `#connect=…` on install; *Opened at* in Settings will tell (8.4) | The clipboard hand-over works either way |
 
 ---
 
@@ -845,7 +864,7 @@ The sheet holds player names and jersey numbers, plus the names recorders type. 
 ### 15.1 The tests
 
 - **Unit tests** ([`tests/game.test.js`](../tests/game.test.js), [`tests/connect.test.js`](../tests/connect.test.js)): run `npm test`. They check the count rules, walks, strikeouts, balls in play, lineup wrap-around, undo, substitutions, pitcher changes, the sheet row, and setup-link encoding and validation. Plain Node.js, nothing to install.
-- **Browser test** ([`tests/e2e.cjs`](../tests/e2e.cjs)): drives the real app in a headless Chrome pretending to be an iPhone and an iPad, with Google replaced by a fake that records what it receives. It plays a whole sequence: settings, setup with a 9-man lineup, a strikeout, a walk, a ball in play and its undo, a substitution and pitcher change, the upload (checking 12 unique rows and one tombstone), going offline, recording, **reloading with no network** (the app must open from the service worker cache, with all data), coming back online, opening a setup link on a second phone, re-opening it, rejecting a bad link, pasting a good one on a third phone, and the Home Screen hand-over from 8.4: the setup link appearing in the address after connecting, an "installed app" with empty storage connecting itself from that address, and an installed app opened at the bare address showing the paste box without reloading in a loop. It also takes screenshots of each screen.
+- **Browser test** ([`tests/e2e.cjs`](../tests/e2e.cjs)): drives the real app in a headless Chrome pretending to be an iPhone and an iPad, with Google replaced by a fake that records what it receives. It plays a whole sequence: settings, setup with a 9-man lineup, a strikeout, a walk, a ball in play and its undo, a substitution and pitcher change, the upload (checking 12 unique rows and one tombstone), going offline, recording, **reloading with no network** (the app must open from the service worker cache, with all data), coming back online, opening a setup link on a second phone, re-opening it, rejecting a bad link, pasting a good one on a third phone, and the Home Screen hand-over from 8.4: the setup link appearing in the address after connecting, an "installed app" with empty storage connecting itself from that address, and an installed app opened at the bare address showing the paste box without reloading in a loop, **Copy setup link** and **Paste & connect** through the clipboard, the version and *Opened at* lines in Settings, and the error filter (an outside *Script error.* is hidden, an error from the app's own file is shown). Updates (10.2) were checked separately by serving a copy of the app and releasing a new `VERSION` while a page was open: on the home screen it reloads into the new version; during a game it waits until you exit to the games list. It also takes screenshots of each screen.
 
 ### 15.2 How a change goes live
 
@@ -874,7 +893,7 @@ From [`CLAUDE.md`](../CLAUDE.md):
 | [`manifest.webmanifest`](../manifest.webmanifest) | 29 | Name, icons, full-screen mode (2.7) |
 | [`sw.js`](../sw.js) | 45 | Offline cache (10) |
 | [`css/app.css`](../css/app.css) | 255 | All styling (11.3) |
-| [`js/app.js`](../js/app.js) | 603 | Screens, taps, startup, settings, setup links (3, 11) |
+| [`js/app.js`](../js/app.js) | 677 | Screens, taps, startup, settings, setup links (3, 11) |
 | [`js/game.js`](../js/game.js) | 164 | Baseball rules (4) |
 | [`js/db.js`](../js/db.js) | 109 | Phone storage (5) |
 | [`js/sync.js`](../js/sync.js) | 90 | Uploads (6) |

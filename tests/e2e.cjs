@@ -155,6 +155,28 @@ const OUT = process.argv[2];
   await oldInstall.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
   const p6 = await oldInstall.newPage(); await p6.goto('http://localhost:8765/');
   await p6.waitForSelector('.connect-box'); assert.equal(p6.url(), 'http://localhost:8765/');
+  // Clipboard hand-over: copy in the "Safari" tab, then Paste & connect in the installed app
+  const hand = await browser.newContext({ ...devices['iPhone 14'], permissions: ['clipboard-read', 'clipboard-write'] });
+  const tab = await hand.newPage(); await tab.goto(shareLink); await tab.waitForSelector('[data-act=copy-link]');
+  await tab.click('[data-act=copy-link]'); await tab.waitForSelector('text=Setup link copied');
+  const copied = await tab.evaluate(() => navigator.clipboard.readText());
+  assert.match(copied, /#connect=/);
+  const inst = await browser.newContext({ ...devices['iPhone 14'], permissions: ['clipboard-read', 'clipboard-write'] });
+  await inst.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
+  const app2 = await inst.newPage(); await app2.goto('http://localhost:8765/');
+  await app2.evaluate((t) => navigator.clipboard.writeText(t), copied);
+  await app2.screenshot({ path: OUT + '/10-paste-connect.png' });
+  await app2.click('[data-act=paste-connect]');
+  await app2.waitForFunction(() => !document.querySelector('.connect-box'));
+  await app2.locator('[data-act=settings]').click();
+  assert.match(await app2.textContent('.facts'), /App version: v\d+/);
+  assert.match(await app2.textContent('.facts'), /Opened at: http:\/\/localhost:8765\/$/m);
+  // Errors from outside the app ("Script error." with no file) are not shown; the app's own are
+  await app2.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'Script error.' })));
+  await app2.waitForTimeout(200);
+  assert.equal(await app2.locator('#toast.error').count(), 0, 'external error hidden');
+  await app2.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'boom', filename: location.origin + '/js/app.js' })));
+  await app2.waitForSelector('#toast.error');
   const m = await (await p6.request.get('http://localhost:8765/manifest.webmanifest')).json();
   assert.equal(m.start_url, undefined, 'manifest must not pin start_url');
   console.log('received rows (incl. resends):', received.length, 'errors:', errors);

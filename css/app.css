@@ -135,6 +135,10 @@ label input { margin-top: 0.3rem; font-weight: 400; }
 .row-buttons { display: flex; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; }
 .row-buttons > * { flex: 1; }
 .facts { padding-left: 1.2rem; }
+.facts code { word-break: break-all; }
+.steps { margin: 0.5rem 0; padding-left: 1.3rem; }
+.steps li { margin: 0.35rem 0; }
+.connect-box .big { margin: 0.4rem 0 0.2rem; }
 
 .lineup-row { display: grid; grid-template-columns: 2.2rem 4.5rem 1fr; gap: 0.5rem; align-items: center; margin: 0.4rem 0; }
 .lineup-row .slot { font-weight: 700; text-align: center; color: var(--muted); }

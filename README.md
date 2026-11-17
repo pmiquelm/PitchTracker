@@ -56,18 +56,21 @@ If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → 
 
 ### 3. Install it on the iPhone / iPad
 
-**After** connecting in step 2, in Safari: **Share → Add to Home Screen**. From then on, always open it from the Home Screen icon.
+1. **After** connecting in step 2, the app's home screen in Safari shows *Install on this phone*. Tap **Copy setup link**.
+2. Tap **Share → Add to Home Screen**.
+3. Open the new icon. If it isn't already connected, tap **Paste & connect** (and **Paste** in the bubble iOS shows).
 
-Order matters on iPhone: an app added to the Home Screen gets its own, empty storage, separate from Safari's. Once connected,
-the app keeps the setup link in Safari's address bar, so **Add to Home Screen** saves it and the installed app connects itself on first launch.
-If an installed app ever opens unconnected (for example one added before connecting), copy the link from
-**Settings → Share setup link** in Safari and paste it into the *Connect to the team sheet* box in the installed app.
+From then on, always open it from the Home Screen icon.
+
+Why the copy step: on iPhone an app added to the Home Screen gets its own, empty storage, separate from Safari's, so
+the connection has to be carried over. The app also tries to carry it in the page address, but iOS doesn't always keep it;
+the clipboard always works.
 
 ### 4. Add other people
 
 - **Viewers** don't need the app. In Google Sheets, use **Share → Anyone with the link → Viewer** and send them the sheet link.
 - **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email).
-  On their iPhone they open it in Safari, tap **Add to Home Screen**, and they're connected. Pitches go into the same sheet,
+  On their iPhone they open it in Safari, tap **Copy setup link**, **Add to Home Screen**, then **Paste & connect** in the new app. Pitches go into the same sheet,
   and the `recorded_by` column shows who recorded each one (from **Settings → Your name**, or a device id).
   If the installed app ever opens without a connection, it shows a box to paste the setup link into.
 - The setup link contains the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
