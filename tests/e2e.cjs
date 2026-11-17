@@ -69,7 +69,7 @@ const OUT = process.argv[2];
   await page.waitForTimeout(800);
   await page.screenshot({ path: OUT + '/3-tracker.png' });
   // Sync check
-  await page.waitForFunction(() => document.querySelector('.sync-badge')?.textContent.includes('All synced'), null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('.sync-badge')?.getAttribute('aria-label').includes('All synced'), null, { timeout: 5000 });
   const byId = new Map(received.map(r => [r.id, r]));
   const rows = [...byId.values()];
   assert.equal(rows.length, 12, 'unique rows');
@@ -79,7 +79,7 @@ const OUT = process.argv[2];
   serverUp = false; await ctx.setOffline(true);
   await pitch('CB','IN','SWING');
   await page.waitForTimeout(800);
-  const badge = await page.textContent('.sync-badge');
+  const badge = await page.getAttribute('.sync-badge', 'aria-label');
   assert.match(badge, /1 not uploaded/, badge);
   // Reload while offline -> app loads from SW cache, data intact
   await page.reload();
@@ -91,7 +91,7 @@ const OUT = process.argv[2];
   await page.click('dialog [data-act=close]');
   // Back online -> pending pitch uploads
   serverUp = true; await ctx.setOffline(false);
-  await page.waitForFunction(() => document.querySelector('.sync-badge')?.textContent.includes('All synced'), null, { timeout: 8000 });
+  await page.waitForFunction(() => document.querySelector('.sync-badge')?.getAttribute('aria-label').includes('All synced'), null, { timeout: 8000 });
   // iPad landscape screenshot
   const ipad = await browser.newContext({ ...devices['iPad Pro 11 landscape'] });
   const p2 = await ipad.newPage(); await p2.goto('http://localhost:8765/');
@@ -179,6 +179,20 @@ const OUT = process.argv[2];
   await app2.waitForSelector('#toast.error');
   const m = await (await p6.request.get('http://localhost:8765/manifest.webmanifest')).json();
   assert.equal(m.start_url, undefined, 'manifest must not pin start_url');
+  // ---- Android: Chrome's install offer becomes an "Install app" button; Back in a game returns home
+  const droid = await browser.newContext({ ...devices['Pixel 7'] });
+  const ad = await droid.newPage(); await ad.goto(shareLink); await ad.waitForSelector('text=New game');
+  assert.equal(await ad.locator('[data-act=copy-link]').count(), 0, 'no clipboard step on Android');
+  await ad.evaluate(() => { const e = new Event('beforeinstallprompt'); e.prompt = () => {}; e.userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
+  await ad.click('[data-act=install]'); await ad.waitForSelector('text=Installing');
+  await ad.getByText('New game').click(); await ad.fill('input[name=name0]', 'A'); await ad.getByText('Start game').click();
+  await ad.click('[data-act=lineup]'); await ad.goBack();
+  await ad.waitForFunction(() => !document.querySelector('dialog[open]')); assert.equal(await ad.locator('.pads').count(), 3, 'Back closes the dialog only');
+  await ad.goBack(); await ad.waitForSelector('text=New game');
+  // Tracker badge is compact; tapping it opens the full status
+  await ad.getByText('New game').click(); await ad.fill('input[name=name0]', 'A'); await ad.getByText('Start game').click();
+  assert.ok((await ad.textContent('.sync-badge')).length <= 9, 'compact badge');
+  await ad.click('.sync-badge'); await ad.waitForSelector('text=Upload status');
   console.log('received rows (incl. resends):', received.length, 'errors:', errors);
   assert.deepEqual(errors.filter(e => !e.includes('INTERNET_DISCONNECTED')), []);
   console.log('E2E OK');

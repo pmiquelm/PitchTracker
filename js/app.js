@@ -27,6 +27,10 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
     return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   }));
 const playerLabel = (p) => (p ? `${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}` : '');
+// iPhone/iPad (iPadOS reports itself as a Mac, so also check for a touch screen).
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let installPrompt = null; // Android/Chrome: the browser's own "Install app" prompt, saved for our button
 const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
 let toastTimer = null;
@@ -38,17 +42,57 @@ function toast(html, kind = '') {
   toastTimer = setTimeout(() => { el.className = ''; }, 2600);
 }
 
-function badgeHTML(s = getSyncStatus()) {
-  let cls = 'ok'; let text = '✓ All synced';
-  if (!s.configured) { cls = s.pending ? 'warn' : 'muted'; text = s.pending ? `${s.pending} not uploaded · no sheet set` : 'Sheet not set up'; }
-  else if (s.syncing) { cls = 'busy'; text = `Syncing ${s.pending}…`; }
-  else if (s.pending) { cls = 'warn'; text = `⚠ ${s.pending} not uploaded${s.error ? ` · ${esc(s.error)}` : ''}`; }
-  return `<button class="sync-badge ${cls}" data-act="sync" aria-label="Sync status">${text}</button>`;
+// One-line summary of the sync state, used by the badge and the status dialog.
+function syncSummary(s = getSyncStatus()) {
+  if (!s.configured) {
+    return s.pending
+      ? { cls: 'warn', short: `⚠ ${s.pending}`, text: `${s.pending} not uploaded: no sheet connected` }
+      : { cls: 'muted', short: 'No sheet', text: 'No sheet connected' };
+  }
+  if (s.syncing) return { cls: 'busy', short: `↻ ${s.pending}`, text: `Uploading ${s.pending}…` };
+  if (s.pending) {
+    return { cls: 'warn', short: `⚠ ${s.pending}`, text: `${s.pending} not uploaded${s.error ? `: ${esc(s.error)}` : ''}` };
+  }
+  return { cls: 'ok', short: '✓ Synced', text: 'All synced' };
+}
+
+// The tracker uses the compact form so it never gets cut off; tap it for details.
+function badgeHTML(s = getSyncStatus(), compact = false) {
+  const m = syncSummary(s);
+  return `<button class="sync-badge ${m.cls}${compact ? ' compact' : ''}" data-act="sync" data-compact="${compact ? 1 : ''}"
+    aria-label="Sync status: ${m.text}">${compact ? m.short : m.text}</button>`;
 }
 
 onSyncStatus((s) => {
-  document.querySelectorAll('.sync-badge').forEach((el) => { el.outerHTML = badgeHTML(s); });
+  document.querySelectorAll('.sync-badge').forEach((el) => { el.outerHTML = badgeHTML(s, !!el.dataset.compact); });
+  const live = document.getElementById('sync-status-text');
+  if (live) live.innerHTML = syncSummary(s).text;
 });
+
+function showSyncDialog() {
+  const s = getSyncStatus();
+  openDialog(`
+    <h2>Upload status</h2>
+    <p class="sync-line"><strong id="sync-status-text">${syncSummary(s).text}</strong></p>
+    <p class="muted small">Last upload: ${s.lastSync ? new Date(s.lastSync).toLocaleTimeString() : 'none this session'}.
+      Pitches are saved on this phone first and upload automatically when there's signal.</p>
+    <div class="menu">
+      ${s.configured ? '<button data-act="sync-now" class="primary">Upload now</button>' : '<button data-act="settings">Connect a sheet</button>'}
+      ${current ? '<button data-act="backup">Back up game (file)</button>' : ''}
+      <button data-act="close">Close</button>
+    </div>`, async (act, btn, dlg) => {
+    if (act === 'sync-now') {
+      await syncNow();
+      if (!getSyncStatus().pending) dlg.close();
+    } else if (act === 'backup') {
+      const r = await backupJSON(current.game, current.events);
+      if (r !== 'cancelled') toast('Backup created');
+    } else if (act === 'settings') {
+      dlg.close();
+      showSettings();
+    }
+  });
+}
 
 function openDialog(html, onClick) {
   const dlg = document.createElement('dialog');
@@ -77,16 +121,7 @@ async function showHome() {
       ${badgeHTML()}
     </header>
     <main class="page">
-      ${isStandalone() ? '' : settingsCache.url ? `<div class="notice">
-        <strong>Install on this phone</strong>
-        <ol class="steps">
-          <li><button class="primary" data-act="copy-link">Copy setup link</button></li>
-          <li>Tap <em>Share</em> → <em>Add to Home Screen</em>.</li>
-          <li>Open the new icon. If it isn't connected, tap <em>Paste &amp; connect</em>.</li>
-        </ol>
-        Data is only kept safely in the installed app.</div>` : `<div class="notice">
-        <strong>Install the app:</strong> connect the sheet first (below, or in <em>Settings</em>), then tap
-        <em>Share</em> → <em>Add to Home Screen</em> and open it from there.</div>`}
+      ${isStandalone() ? '' : installNoticeHTML()}
       ${persistence === 'not-persisted' && isStandalone() ? '<div class="notice">Storage is not marked persistent yet. Close the app fully and reopen it; iOS usually grants it after that.</div>' : ''}
       ${settingsCache.url ? '' : `<div class="connect-box">
         <strong>Connect to the team sheet</strong>
@@ -118,10 +153,11 @@ async function showHome() {
     if (act === 'new') showSetup();
     else if (act === 'open') showTracker(btn.dataset.key);
     else if (act === 'settings') showSettings();
-    else if (act === 'sync') syncNow();
+    else if (act === 'sync') showSyncDialog();
     else if (act === 'paste-link') pasteInto(document.getElementById('connect-input'));
     else if (act === 'paste-connect') pasteAndConnect();
     else if (act === 'copy-link') copySetupLink();
+    else if (act === 'install') installApp();
     else if (act === 'connect') {
       connectFromLink(document.getElementById('connect-input').value).then(async (ok) => {
         if (!ok) return;
@@ -142,6 +178,42 @@ async function showHome() {
       toast(`Import failed: ${esc(err.message)}`, 'error');
     }
   };
+}
+
+// The "install the app" box on the home screen, different per platform.
+function installNoticeHTML() {
+  if (!settingsCache.url) {
+    return `<div class="notice"><strong>Install the app:</strong> connect the sheet first (below, or in <em>Settings</em>),
+      then install it from this screen.</div>`;
+  }
+  if (isIOS()) {
+    // iOS: the Home Screen app gets its own empty storage, so carry the link over by clipboard.
+    return `<div class="notice">
+      <strong>Install on this phone</strong>
+      <ol class="steps">
+        <li><button class="primary" data-act="copy-link">Copy setup link</button></li>
+        <li>Tap <em>Share</em> → <em>Add to Home Screen</em>.</li>
+        <li>Open the new icon. If it isn't connected, tap <em>Paste &amp; connect</em>.</li>
+      </ol>
+      Data is only kept safely in the installed app.</div>`;
+  }
+  // Android and desktop Chrome/Edge: the installed app shares the browser's storage, so it
+  // is connected already. Use the browser's own install prompt when it offers one.
+  return `<div class="notice">
+    <strong>Install on this phone</strong>
+    ${installPrompt
+      ? '<p><button class="primary" data-act="install">Install app</button></p>'
+      : '<p>Open the browser menu (<b>⋮</b>) → <em>Install app</em> or <em>Add to Home screen</em>.</p>'}
+    The installed app is already connected to the sheet. Open it from its icon from now on.</div>`;
+}
+
+async function installApp() {
+  if (!installPrompt) return;
+  installPrompt.prompt();
+  const { outcome } = await installPrompt.userChoice;
+  installPrompt = null;
+  if (outcome === 'accepted') toast('Installing… open PitchTracker from its icon');
+  if (!current) showHome();
 }
 
 // ---------- setup ----------
@@ -198,6 +270,8 @@ async function showTracker(key) {
   if (!game) { showHome(); return; }
   const events = await db.getEvents(key);
   current = { game, events, state: replay(game, events) };
+  // Leave a history entry so Android's Back button comes back here (see popstate in boot).
+  if (!history.state?.tracker) history.pushState({ tracker: true }, '', location.href);
   sel = { pitchType: null, zone: null, action: null };
   renderTracker();
 }
@@ -243,20 +317,22 @@ function renderTracker() {
   app.innerHTML = `
     <header class="scorebar">
       <button class="icon" data-act="menu" aria-label="Menu">☰</button>
-      <div class="inning">
-        <button data-act="inning" data-delta="-1" aria-label="Previous inning">−</button>
-        <span>Inn ${state.inning}</span>
-        <button data-act="inning" data-delta="1" aria-label="Next inning">+</button>
-      </div>
       <div class="count" aria-label="Count ${state.balls} balls ${state.strikes} strikes">
         <div class="count-num">${state.balls}<span>-</span>${state.strikes}</div>
         <div class="count-dots"><span>B ${dots(state.balls, 3, 'ball')}</span><span>S ${dots(state.strikes, 2, 'strike')}</span></div>
       </div>
-      ${badgeHTML()}
+      ${badgeHTML(getSyncStatus(), true)}
     </header>
     <div class="batter-bar">
-      <div><span class="label">Batting ${state.slot + 1}</span> <strong>${playerLabel(batter)}</strong>
-        <span class="muted"> · PA ${state.paNumber}${state.pitchInPa ? ` · pitch ${state.pitchInPa + 1}` : ''}</span></div>
+      <div class="batter-row">
+        <div class="batter-name"><span class="label">Batting ${state.slot + 1}</span> <strong>${playerLabel(batter)}</strong>
+          <span class="muted"> · PA ${state.paNumber}</span></div>
+        <div class="inning" aria-label="Inning ${state.inning}">
+          <button data-act="inning" data-delta="-1" aria-label="Previous inning">−</button>
+          <span><small>INN</small>${state.inning}</span>
+          <button data-act="inning" data-delta="1" aria-label="Next inning">+</button>
+        </div>
+      </div>
       <div class="last ${current.last?.paEnd ? 'pa-end' : ''}">${current.last?.html || '&nbsp;'}</div>
       <div class="muted small">On deck: ${playerLabel(onDeck)}${state.pitcher ? ` · P: ${esc(state.pitcher)} (${state.pitcherPitches})` : ` · ${state.pitchNumber} pitches`}</div>
     </div>
@@ -307,16 +383,16 @@ async function handleTrackerClick(e) {
   } else if (act === 'menu') {
     showMenu();
   } else if (act === 'sync') {
-    syncNow();
+    showSyncDialog();
   }
 }
 
 async function recordPitch(input) {
   const ev = await addEvent('pitch', input);
   const r = ev.row;
-  let msg = `Last: ${PITCH_TYPES[input.pitchType]} · ${input.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[input.action]} → <strong>${RESULT_LABELS[r.result]}</strong>`;
+  let msg = `Last: ${PITCH_TYPES[input.pitchType]} · ${input.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[input.action]} → <b>${RESULT_LABELS[r.result]}</b>`;
   if (r.pa_end) {
-    msg += ` · <strong>${PA_END_LABELS[r.pa_end]}</strong>, next batter up`;
+    msg += ` · <b>${PA_END_LABELS[r.pa_end]}</b>`;
   }
   current.last = { html: msg, paEnd: !!r.pa_end };
   await refreshPending();
@@ -654,6 +730,20 @@ async function boot() {
   // added to the Home Screen, so the installed app connects on first launch too.
   if (location.hash.includes('connect=')) await connectFromLink(location.hash, { fromUrl: true });
   if (await keepLinkInAddress()) { location.reload(); return; }
+  // Android Back during a game: close an open dialog, or go back to the games list.
+  // Pitches are already saved, so leaving the tracker never loses anything.
+  window.addEventListener('popstate', () => {
+    const dlg = document.querySelector('dialog[open]');
+    if (dlg) { dlg.close(); if (current) history.pushState({ tracker: true }, '', location.href); return; }
+    if (current) showHome();
+  });
+  // Chrome/Android offers its own install prompt; keep it for the "Install app" button.
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    if (!current && document.querySelector('[data-act="new"]')) showHome();
+  });
+  window.addEventListener('appinstalled', () => { installPrompt = null; });
   initSync();
   await showHome();
   try {

@@ -66,11 +66,16 @@ Why the copy step: on iPhone an app added to the Home Screen gets its own, empty
 the connection has to be carried over. The app also tries to carry it in the page address, but iOS doesn't always keep it;
 the clipboard always works.
 
+**Android** (Chrome, Samsung Internet, Edge): connect the sheet in the browser first, then tap **Install app** on the
+app's home screen (or browser menu **⋮ → Install app / Add to Home screen**). On Android the installed app shares the
+browser's storage, so it's already connected; there is no copy-and-paste step. The phone's Back button returns from a
+game to the games list.
+
 ### 4. Add other people
 
 - **Viewers** don't need the app. In Google Sheets, use **Share → Anyone with the link → Viewer** and send them the sheet link.
 - **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email).
-  On their iPhone they open it in Safari, tap **Copy setup link**, **Add to Home Screen**, then **Paste & connect** in the new app. Pitches go into the same sheet,
+  On iPhone they open it in Safari, tap **Copy setup link**, **Add to Home Screen**, then **Paste & connect** in the new app. On Android they open it and tap **Install app**. Pitches go into the same sheet,
   and the `recorded_by` column shows who recorded each one (from **Settings → Your name**, or a device id).
   If the installed app ever opens without a connection, it shows a box to paste the setup link into.
 - The setup link contains the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
