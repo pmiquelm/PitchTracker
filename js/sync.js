@@ -11,7 +11,7 @@ const TIMEOUT_MS = 30000;
 // The sheet script must be at least this version (it reports it in every reply).
 // Older scripts don't know the PlateAppearances sheet or the new columns.
 export const SCRIPT_VERSION = 2;
-const OUTDATED = 'The sheet script is out of date: paste the new Code.gs, run setup, then Deploy → Manage deployments → Edit → New version';
+const OUTDATED = 'The sheet script is out of date: deploy the new Code.gs (merge to main, or paste it and Deploy → Manage deployments → Edit → New version)';
 
 let status = { pending: 0, syncing: false, configured: false, error: null, lastSync: null };
 const listeners = new Set();

@@ -9,15 +9,17 @@
  *     Execute as: Me.  Who has access: Anyone.  → Deploy, copy the /exec URL.
  *  4. In the app: Settings → paste the URL and the token → Save → Test connection.
  *
- * Updating from an older version: paste this file, run `setup` again (it moves existing
- * rows into the new column layout and keeps a copy of the old sheet), then
- * Deploy → Manage deployments → Edit → Version: New version → Deploy.
+ * Updating: deploy the new version of this file (by hand: Deploy → Manage deployments →
+ * Edit → Version: New version; or automatically from GitHub, see README). There's no need
+ * to run `setup` again: if the columns changed, the first upload after the deploy moves the
+ * existing rows into the new layout, after keeping a copy of the old sheet.
  *
  * Rows are upserted by `id`, so the app can safely resend the same pitch.
  */
 
-// The app refuses to sync with a script older than this.
-const VERSION = 2;
+// The app refuses to sync with a script older than its minimum. Bump this on every change:
+// the deploy workflow checks the live script reports it, to confirm the deploy went live.
+const VERSION = 3;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -42,8 +44,21 @@ const PA_HEADERS = [
 const TEXT_COLUMNS = ['id', 'game_id', 'batter_number', 'recorded_by', 'batting_team', 'pitching_team',
   'result', 'fielder', 'pa_result'];
 
+// Run once by hand in a new sheet: creates the tabs and the token.
 function setup() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  updateLayout(SpreadsheetApp.getActiveSpreadsheet());
+  const props = PropertiesService.getScriptProperties();
+  let token = props.getProperty('TOKEN');
+  if (!token) {
+    token = Utilities.getUuid();
+    props.setProperty('TOKEN', token);
+  }
+  Logger.log('TOKEN (paste into the app settings): ' + token);
+}
+
+// Brings both data tabs to the current columns (keeping a copy of any tab whose rows
+// have to move) and rebuilds Summary, whose formulas use column letters. Safe to repeat.
+function updateLayout(ss) {
   prepareSheet(ss, SHEET_NAME, HEADERS);
   prepareSheet(ss, PA_SHEET_NAME, PA_HEADERS);
 
@@ -65,14 +80,6 @@ function setup() {
     summary.getRange(row, 1).setValue(title).setFontWeight('bold');
     summary.getRange(row + 1, 1).setFormula(formula);
   });
-
-  const props = PropertiesService.getScriptProperties();
-  let token = props.getProperty('TOKEN');
-  if (!token) {
-    token = Utilities.getUuid();
-    props.setProperty('TOKEN', token);
-  }
-  Logger.log('TOKEN (paste into the app settings): ' + token);
 }
 
 // Creates the sheet, or brings an existing one up to the current columns.
@@ -133,13 +140,15 @@ function doPost(e) {
     const pas = Array.isArray(body.pas) ? body.pas : [];
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    // First request after a deploy that changed the columns (or a tab was deleted):
+    // update the layout now, under the lock, before writing anything.
+    if (!layoutCurrent(ss)) updateLayout(ss);
+    // Writing in the wrong layout would mix up columns, so never write unless it matches.
+    if (!layoutCurrent(ss)) {
+      return json({ ok: false, error: 'The sheet columns could not be updated: run setup() in the sheet script' });
+    }
     const sheet = ss.getSheetByName(SHEET_NAME);
     const paSheet = ss.getSheetByName(PA_SHEET_NAME);
-    if (!sheet || !paSheet) return json({ ok: false, error: 'Run setup() in the sheet script first' });
-    // Writing in the wrong layout would mix up columns, so refuse until setup has run.
-    if (!headersMatch(sheet, HEADERS) || !headersMatch(paSheet, PA_HEADERS)) {
-      return json({ ok: false, error: 'The sheet columns are out of date: run setup() in the sheet script again' });
-    }
 
     const r1 = upsert(sheet, HEADERS, body.rows);
     const r2 = upsert(paSheet, PA_HEADERS, pas);
@@ -149,6 +158,12 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function layoutCurrent(ss) {
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  const paSheet = ss.getSheetByName(PA_SHEET_NAME);
+  return !!(sheet && paSheet && headersMatch(sheet, HEADERS) && headersMatch(paSheet, PA_HEADERS));
 }
 
 function headersMatch(sheet, headers) {

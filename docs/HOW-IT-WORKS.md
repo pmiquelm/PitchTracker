@@ -298,7 +298,7 @@ The 0.3-second delay groups pitches entered in quick succession into one upload,
 
 ### 3.7 In the sheet: `doPost`
 
-On Google's side, [`doPost`](../apps-script/Code.gs#L122) receives the batch, checks the token, and for each pitch either updates the row with that ID or appends a new row. Section 7 covers it.
+On Google's side, [`doPost`](../apps-script/Code.gs#L129) receives the batch, checks the token, and for each pitch either updates the row with that ID or appends a new row. Section 7 covers it.
 
 ---
 
@@ -426,7 +426,7 @@ This is the sequence the browser test runs (section 15).
 
 [`buildPaRow`](../js/game.js#L377) builds the **PlateAppearances** row, one per finished at-bat: the same situation columns (`inning`, `half`, teams, `outs_before`, `pa_number`, batter, `pitcher`), then `pitches` (how many in the at-bat), `balls`/`strikes` (the count on the last pitch), `result` (a code such as `2B`), `result_label` (`Double`), `category` (`hit`, `out`, `fc`, `sac`, `error`, `strikeout`, `walk`, `hbp`, `interference`), `batted_ball` (`ground`, `line`, `fly`, `bunt` where the choice tells us), `fielder` (`P` … `RF`, or empty if skipped) and `outs_on_play`.
 
-The column lists are defined in [`PITCH_COLUMNS`](../js/game.js#L99) and [`PA_COLUMNS`](../js/game.js#L109), and again in the script's [`HEADERS` and `PA_HEADERS`](../apps-script/Code.gs#L24). They must match; a unit test checks that they do.
+The column lists are defined in [`PITCH_COLUMNS`](../js/game.js#L99) and [`PA_COLUMNS`](../js/game.js#L109), and again in the script's [`HEADERS` and `PA_HEADERS`](../apps-script/Code.gs#L26). They must match; a unit test checks that they do.
 
 Because rows are **snapshots** made at the moment of the event, later events (a substitution, a pitcher change) never rewrite earlier rows. That's what you want: the row records who was actually batting at the time. The one deliberate exception is `pa_result` on a ball-in-play pitch, which is filled in when its outcome is chosen (and cleared again if the outcome is undone).
 
@@ -606,42 +606,42 @@ Apps Script is JavaScript that runs **on Google's servers**, attached to a Googl
 
 Every **New deployment** creates a new address. To change the script but keep the address (so setup links keep working), use **Deploy → Manage deployments → Edit → Version: New version**. The GitHub Action in 15.2 does the same thing automatically.
 
-### 7.3 `setup`: run once by hand
+### 7.3 `setup`: run once by hand, in a new sheet
 
-[`setup`](../apps-script/Code.gs#L45):
+[`setup`](../apps-script/Code.gs#L48) runs [`updateLayout`](../apps-script/Code.gs#L61) and creates the token:
 
 1. Creates the **Pitches** tab with the header row, bold and frozen.
-2. Formats `id`, `game_id`, `batter_number` and `recorded_by` as **plain text** ([line 105](../apps-script/Code.gs#L105)). Otherwise Sheets "helpfully" turns a game ID like `2026-05-01` into a date, and jersey number `07` into `7`.
+2. Formats `id`, `game_id`, `batter_number` and `recorded_by` as **plain text** ([line 112](../apps-script/Code.gs#L112)). Otherwise Sheets "helpfully" turns a game ID like `2026-05-01` into a date, and jersey number `07` into `7`.
 3. Builds the **Summary** tab with three `QUERY` formulas (7.6).
-4. Generates the **token** (a random UUID) if there isn't one, stores it in the script's private **Script properties** ([line 73](../apps-script/Code.gs#L73)), and prints it to the execution log.
+4. Generates the **token** (a random UUID) if there isn't one, stores it in the script's private **Script properties** ([line 54](../apps-script/Code.gs#L54)), and prints it to the execution log.
 
-Running it again is safe: it keeps the existing token and rows, and rebuilds the header and Summary.
+Running it again is safe: it keeps the existing token and rows, and rebuilds the header and Summary. It is only needed once, for a new sheet: after that, column changes are applied by the script itself (7.5, step 3).
 
 ### 7.4 The token
 
-The token is a shared secret between your sheet and the phones you've set up. Every upload carries it; the script compares it with the stored one and refuses with *Wrong token* if they differ ([line 131](../apps-script/Code.gs#L131)).
+The token is a shared secret between your sheet and the phones you've set up. Every upload carries it; the script compares it with the stored one and refuses with *Wrong token* if they differ ([line 138](../apps-script/Code.gs#L138)).
 
 It lives in **Script properties**, not in the code, so the code can sit in a public repository. To revoke everyone's access: delete the `TOKEN` property (**Project Settings → Script properties**), run `setup` again to get a new token, and share a new setup link. Old links stop working immediately.
 
 ### 7.5 `doPost`: receiving pitches and plate appearances
 
-[`doPost`](../apps-script/Code.gs#L122), step by step:
+[`doPost`](../apps-script/Code.gs#L129), step by step:
 
-1. **Takes a lock** ([line 127](../apps-script/Code.gs#L127)) so two phones uploading at the same moment can't both append to the same "last row" and overwrite each other. The second waits up to 15 s for the first, then answers *Sheet busy* and the phone tries again later.
+1. **Takes a lock** ([line 134](../apps-script/Code.gs#L134)) so two phones uploading at the same moment can't both append to the same "last row" and overwrite each other. The second waits up to 15 s for the first, then answers *Sheet busy* and the phone tries again later.
 2. Reads the JSON body and **checks the token**.
-3. **Checks both sheets have the current columns** ([line 140](../apps-script/Code.gs#L140)). If you pasted a new `Code.gs` but didn't run `setup` again, it refuses rather than writing values under the wrong headings.
-4. Then, for the pitches (`rows`) into **Pitches** and the plate appearances (`pas`) into **PlateAppearances**, [`upsert`](../apps-script/Code.gs#L160):
+3. **Checks both sheets have the current columns** ([line 145](../apps-script/Code.gs#L145)). If they don't (the first request after deploying a `Code.gs` with new columns, or a deleted tab), it runs [`updateLayout`](../apps-script/Code.gs#L61) right there, under the lock, before writing anything. If the layout still doesn't match (for example a column it doesn't know, which it won't delete), it refuses with the reason rather than writing values under the wrong headings, and the phones keep the data.
+4. Then, for the pitches (`rows`) into **Pitches** and the plate appearances (`pas`) into **PlateAppearances**, [`upsert`](../apps-script/Code.gs#L175):
    1. removes duplicates inside the batch (the last copy of an ID wins);
    2. reads the whole `id` column once and builds a lookup: ID → row number;
-   3. builds each row in header order (turning `recorded_at` into a real date, adding `synced_at` = now), then **ID already present** → overwrite that row ([line 184](../apps-script/Code.gs#L184)), which is how resends, undos (tombstones) and late outcomes land; **new ID** → add to a list of new rows;
+   3. builds each row in header order (turning `recorded_at` into a real date, adding `synced_at` = now), then **ID already present** → overwrite that row ([line 199](../apps-script/Code.gs#L199)), which is how resends, undos (tombstones) and late outcomes land; **new ID** → add to a list of new rows;
    4. writes all new rows in **one** operation at the bottom.
-5. Answers `{"ok": true, "version": 2, "received": N, "appended": M, "pas": P}`, or `{"ok": false, "error": "…"}`. The lock is always released.
+5. Answers `{"ok": true, "version": 3, "received": N, "appended": M, "pas": P}`, or `{"ok": false, "error": "…"}`. The lock is always released.
 
-`doGet` ([line 118](../apps-script/Code.gs#L118)) just answers `{"ok": true, "version": 2}`. **Test connection** sends an empty upload instead (`rows: []`), so it also checks the token, the script version and that `setup` has been run for the current columns.
+`doGet` ([line 125](../apps-script/Code.gs#L125)) just answers `{"ok": true, "version": 3}`; the deploy workflow uses it to confirm the new version is live. **Test connection** sends an empty upload instead (`rows: []`), so it also checks the token and the script version, and brings the columns up to date if a deploy changed them.
 
 **Versions.** The app refuses to sync with a script that doesn't report version 2 or later, and says why (*the sheet script is out of date*). That stops an old script, which doesn't know about plate appearances, from answering "ok" and having the app mark them uploaded. Nothing is lost while it waits: everything stays pending on the phone.
 
-**Updating an existing sheet.** Paste the new `Code.gs`, run `setup` again, then **Deploy → Manage deployments → Edit → New version**. [`prepareSheet`](../apps-script/Code.gs#L80) sees that Pitches has the old columns, saves a copy of it as *Pitches (before update …)*, and moves every existing row into the new layout by column name. New columns are left blank for old rows.
+**Updating an existing sheet.** Deploy the new `Code.gs` (automatically from GitHub, or paste it and **Deploy → Manage deployments → Edit → New version**). On the first upload, [`prepareSheet`](../apps-script/Code.gs#L87) sees that Pitches has the old columns, saves a copy of it as *Pitches (before update …)*, and moves every existing row into the new layout by column name. New columns are left blank for old rows.
 
 ### 7.6 The Summary tab
 
@@ -952,7 +952,7 @@ The sheet holds player names and jersey numbers, plus the names recorders type. 
 4. GitHub Pages republishes `main` within a minute or two.
 5. Each phone picks up the new version the next time the app is opened with signal, and runs it from the launch after that (10.2).
 
-If `apps-script/Code.gs` changes, it must also reach Google as a **new version of the existing deployment** (7.2). With [automatic script updates](../README.md#automatic-script-updates-optional) set up, merging to `main` does that: a GitHub Action fetches the live project, replaces `Code.gs` and redeploys. Otherwise paste it into the Apps Script editor and deploy by hand. Either way, run `setup` by hand if the headers changed.
+If `apps-script/Code.gs` changes, it must also reach Google as a **new version of the existing deployment** (7.2). With [automatic script updates](../README.md#automatic-script-updates-optional) set up, merging to `main` does that: a GitHub Action fetches the live project, replaces `Code.gs` and redeploys. Otherwise paste it into the Apps Script editor and deploy by hand. No `setup` run is needed when the headers change: the first upload after the deploy updates the layout (7.5). The workflow ends by checking the live script reports the new `VERSION` from `Code.gs`, so bump it on every change to the script.
 
 ### 15.3 Rules for changing the code
 
