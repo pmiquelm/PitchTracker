@@ -73,12 +73,13 @@ async function showHome() {
     </header>
     <main class="page">
       ${isStandalone() ? '' : `<div class="notice">
-        <strong>Install the app:</strong> tap <em>Share</em> → <em>Add to Home Screen</em>, then open it from there.
+        <strong>Install the app:</strong> ${settingsCache.url ? 'now that the sheet is connected, ' : ''}tap <em>Share</em> → <em>Add to Home Screen</em>, then open it from there.
         Data is only kept safely when it runs as an installed app.</div>`}
       ${persistence === 'not-persisted' && isStandalone() ? '<div class="notice">Storage is not marked persistent yet. Install to the home screen and reopen the app.</div>' : ''}
       ${settingsCache.url ? '' : `<div class="connect-box">
         <strong>Connect to the team sheet</strong>
-        <p class="muted small">Paste the setup link you were sent (or open it on this device).</p>
+        <p class="muted small">Paste the setup link you were sent. If you set the sheet up in Safari, get it there from
+          <em>Settings → Share setup link</em>.</p>
         <input id="connect-input" placeholder="https://…#connect=…" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="row-buttons"><button data-act="paste-link">Paste</button><button class="primary" data-act="connect">Connect</button></div>
       </div>`}
@@ -106,7 +107,10 @@ async function showHome() {
     else if (act === 'sync') syncNow();
     else if (act === 'paste-link') pasteInto(document.getElementById('connect-input'));
     else if (act === 'connect') {
-      connectFromLink(document.getElementById('connect-input').value).then((ok) => { if (ok) showHome(); });
+      connectFromLink(document.getElementById('connect-input').value).then(async (ok) => {
+        if (!ok) return;
+        if (await keepLinkInAddress()) location.reload(); else showHome();
+      });
     }
   };
   document.getElementById('import-file').onchange = async (e) => {
@@ -482,12 +486,15 @@ async function showSettings() {
     if (btn.dataset.act === 'share-link') shareSetupLink(document.getElementById('setup-link').value);
     if (btn.dataset.act === 'paste-link') pasteInto(document.getElementById('connect-input'));
     if (btn.dataset.act === 'connect') {
-      if (await connectFromLink(document.getElementById('connect-input').value)) showSettings();
+      if (await connectFromLink(document.getElementById('connect-input').value)) {
+        if (await keepLinkInAddress()) location.reload(); else showSettings();
+      }
     }
   };
   form.onsubmit = async (e) => {
     e.preventDefault();
     await updateSettings({ url: form.url.value.trim(), token: form.token.value.trim(), recorder: form.recorder.value.trim() });
+    if (await keepLinkInAddress()) { location.reload(); return; }
     toast('Saved');
     syncNow();
   };
@@ -530,8 +537,25 @@ async function connectFromLink(text, { fromUrl = false } = {}) {
     return false;
   }
   await updateSettings({ url: c.url, token: c.token, appliedLink: c.code });
-  toast(same ? 'Already connected to this sheet' : 'Connected to the sheet ✓');
+  const msg = same ? 'Already connected to this sheet' : 'Connected to the sheet ✓';
+  toast(msg);
+  try { sessionStorage.setItem('pt-toast', msg); } catch { /* shown again after a reload, if storage works */ }
   syncNow();
+  return true;
+}
+
+// iOS gives an app added to the Home Screen its own, empty storage, so a
+// connection saved in Safari doesn't carry over. Instead, while the page is open
+// in a browser tab and connected, the setup link is kept in the address bar:
+// "Add to Home Screen" saves that address, and the installed app connects itself
+// on first launch. Returns true if the address changed (the caller reloads so the
+// page is loaded fresh from the new address).
+async function keepLinkInAddress() {
+  if (isStandalone() || !settingsCache.url || !settingsCache.token) return false;
+  const link = buildSetupLink(appBaseUrl(), settingsCache);
+  if (location.href === link) return false;
+  await updateSettings({ appliedLink: decodeConnect(link).code });
+  history.replaceState(null, '', link);
   return true;
 }
 
@@ -565,8 +589,13 @@ async function boot() {
   // The link stays in the address bar on purpose: iOS keeps it when the page is
   // added to the Home Screen, so the installed app connects on first launch too.
   if (location.hash.includes('connect=')) await connectFromLink(location.hash, { fromUrl: true });
+  if (await keepLinkInAddress()) { location.reload(); return; }
   initSync();
-  showHome();
+  await showHome();
+  try {
+    const msg = sessionStorage.getItem('pt-toast');
+    if (msg) { sessionStorage.removeItem('pt-toast'); toast(esc(msg)); }
+  } catch { /* ignore */ }
 }
 
 window.addEventListener('error', (e) => toast(`Error: ${esc(e.message)}`, 'error'));

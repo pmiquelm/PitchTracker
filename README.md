@@ -37,11 +37,7 @@ The data goes into a Google Sheet that other people can open, filter and build d
 On GitHub: **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `(root)` → Save**.
 After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
 
-### 2. Install it on the iPhone / iPad
-
-Open that URL in **Safari** → **Share** → **Add to Home Screen**, then always open it from the Home Screen icon.
-
-### 3. Connect the Google Sheet
+### 2. Connect the Google Sheet
 
 1. Create a new Google Sheet, then go to **Extensions → Apps Script**.
 2. Delete the sample code and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs). Save.
@@ -49,12 +45,21 @@ Open that URL in **Safari** → **Share** → **Add to Home Screen**, then alway
    *Advanced → Go to project* if Google warns you.
    This creates the **Pitches** and **Summary** tabs. Open **Execution log** and copy the **TOKEN**.
 4. **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as*: **Me**, *Who has access*: **Anyone**. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
-5. In the app: **Settings**, paste the URL and token, **Save**, then **Test connection**.
+5. Open the app's URL in **Safari** → **Settings**, paste the URL and token, **Save**, then **Test connection**.
 
 "Anyone" means anyone with the URL can reach the script. Writes are refused without the token.
 Share the *sheet* with viewers as usual. They never need the URL or the token.
 
 If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → New version** so the URL stays the same.
+
+### 3. Install it on the iPhone / iPad
+
+**After** connecting in step 2, in Safari: **Share → Add to Home Screen**. From then on, always open it from the Home Screen icon.
+
+Order matters on iPhone: an app added to the Home Screen gets its own, empty storage, separate from Safari's. Once connected,
+the app keeps the setup link in Safari's address bar, so **Add to Home Screen** saves it and the installed app connects itself on first launch.
+If an installed app ever opens unconnected (for example one added before connecting), copy the link from
+**Settings → Share setup link** in Safari and paste it into the *Connect to the team sheet* box in the installed app.
 
 ### 4. Add other people
 
