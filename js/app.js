@@ -1,10 +1,11 @@
 import * as db from './db.js';
 import {
-  PITCH_TYPES, ZONES, ACTIONS, RESULT_LABELS, PA_END_LABELS,
-  replay, buildPitchRow, activeEvents,
+  PITCH_TYPES, ACTIONS, RESULT_LABELS, PA_END_LABELS, PA_RESULTS, OUTCOME_TREE, NEXT_BATTER_REASONS,
+  replay, buildPitchRow, pitchPaRow, outcomePaRow, nextBatterPaRow, activeEvents,
+  battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel,
 } from './game.js';
 import { initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection } from './sync.js';
-import { backupJSON, exportCSV, importBackup } from './backup.js';
+import { backupJSON, exportCSV, exportPaCSV, importBackup } from './backup.js';
 import { buildSetupLink, decodeConnect, isSetupLinkHash, isValidScriptUrl, sheetCode } from './connect.js';
 import qrcodegen from './vendor/qrcodegen.js';
 
@@ -13,6 +14,7 @@ const LINEUP_SIZE = 9;
 
 let current = null; // { game, events, state }
 let sel = { pitchType: null, zone: null, action: null };
+let tree = { category: null, result: null }; // ball-in-play decision tree progress
 let persistence = 'unknown';
 let settingsCache = {}; // { url, token, recorder, deviceId, appliedLink }
 let updateReady = false;  // a new version has taken over; reload at the next safe moment
@@ -222,12 +224,20 @@ async function installApp() {
 function showSetup() {
   app.classList.remove('tracker-mode');
   const today = new Date().toISOString().slice(0, 10);
-  const rows = Array.from({ length: LINEUP_SIZE }, (_, i) => `
-    <div class="lineup-row">
-      <span class="slot">${i + 1}</span>
-      <input name="num${i}" inputmode="numeric" placeholder="#" class="num" autocomplete="off">
-      <input name="name${i}" placeholder="Batter ${i + 1}" autocomplete="off" autocapitalize="words">
-    </div>`).join('');
+  // Team 0 is the away team (bats in the top of each inning), team 1 the home team.
+  const teamForm = (t, title) => `
+    <fieldset class="team">
+      <legend>${title}</legend>
+      <label>Team name<input name="t${t}_team" value="${t ? 'Home' : 'Away'}" autocapitalize="words"></label>
+      <label>Starting pitcher <span class="muted">(optional)</span><input name="t${t}_pitcher" autocapitalize="words"></label>
+      <h3>Batting order <span class="muted">(blank = Batter 1–9)</span></h3>
+      ${Array.from({ length: LINEUP_SIZE }, (_, i) => `
+        <div class="lineup-row">
+          <span class="slot">${i + 1}</span>
+          <input name="t${t}_num${i}" inputmode="numeric" placeholder="#" class="num" autocomplete="off">
+          <input name="t${t}_name${i}" placeholder="Batter ${i + 1}" autocomplete="off" autocapitalize="words">
+        </div>`).join('')}
+    </fieldset>`;
 
   app.innerHTML = `
     <header class="bar">
@@ -238,9 +248,10 @@ function showSetup() {
     <main class="page">
       <form id="setup" autocomplete="off">
         <label>Game ID<input name="gameId" required value="${today}-" autocapitalize="characters"></label>
-        <label>Starting pitcher <span class="muted">(optional)</span><input name="pitcher" autocapitalize="words"></label>
-        <h2>Batting order</h2>
-        ${rows}
+        <div class="teams">
+          ${teamForm(0, 'Away team <span class="muted">· bats first</span>')}
+          ${teamForm(1, 'Home team')}
+        </div>
         <button class="big primary" type="submit">Start game</button>
       </form>
     </main>`;
@@ -252,15 +263,23 @@ function showSetup() {
     e.preventDefault();
     const f = new FormData(e.target);
     const gameId = String(f.get('gameId')).trim();
-    const lineup = [];
-    for (let i = 0; i < LINEUP_SIZE; i++) {
-      const name = String(f.get(`name${i}`)).trim();
-      const number = String(f.get(`num${i}`)).trim();
-      if (name || number) lineup.push({ name: name || `Batter ${i + 1}`, number });
-    }
+    const teams = [0, 1].map((t) => {
+      const lineup = [];
+      for (let i = 0; i < LINEUP_SIZE; i++) {
+        const name = String(f.get(`t${t}_name${i}`)).trim();
+        const number = String(f.get(`t${t}_num${i}`)).trim();
+        if (name || number) lineup.push({ name: name || `Batter ${i + 1}`, number });
+      }
+      // Opponent's lineup unknown? Track them by batting-order spot.
+      if (!lineup.length) for (let i = 0; i < LINEUP_SIZE; i++) lineup.push({ name: `Batter ${i + 1}`, number: '' });
+      return {
+        name: String(f.get(`t${t}_team`)).trim() || (t ? 'Home' : 'Away'),
+        pitcher: String(f.get(`t${t}_pitcher`)).trim(),
+        lineup,
+      };
+    });
     if (!gameId) { toast('Enter a game ID', 'error'); return; }
-    if (!lineup.length) { toast('Enter at least one batter', 'error'); return; }
-    const game = { key: uuid(), gameId, pitcher: String(f.get('pitcher')).trim(), lineup, createdAt: Date.now() };
+    const game = { key: uuid(), gameId, teams, createdAt: Date.now() };
     await db.putGame(game);
     showTracker(game.key);
   };
@@ -275,6 +294,7 @@ async function showTracker(key) {
   // Leave a history entry so Android's Back button comes back here (see popstate in boot).
   if (!history.state?.tracker) history.pushState({ tracker: true }, '', location.href);
   sel = { pitchType: null, zone: null, action: null };
+  tree = { category: null, result: null };
   renderTracker();
 }
 
@@ -282,20 +302,46 @@ function nextSeq() {
   return current.events.reduce((m, e) => Math.max(m, e.seq), 0) + 1;
 }
 
+// Saves an event (and any rows it changes) to disk, then replays the game.
+// Events that end a plate appearance carry a `paRow` for the PlateAppearances sheet.
 async function addEvent(type, data, extra = {}) {
+  const { game, state } = current;
   const ev = {
-    id: uuid(), gameKey: current.game.key, seq: nextSeq(), type, data,
+    id: uuid(), gameKey: game.key, seq: nextSeq(), type, data,
     createdAt: Date.now(), deleted: 0, dirty: 0, rev: 1, ...extra,
   };
+  const changed = []; // other events whose rows this one updates
   if (type === 'pitch') {
-    ev.row = buildPitchRow(current.game, current.state, data, ev);
+    ev.row = buildPitchRow(game, state, data, ev);
     ev.row.recorded_by = recorderLabel();
-    ev.dirty = 1;
+    const pa = pitchPaRow(game, state, data, ev);
+    if (pa) ev.paRow = pa;
+  } else if (type === 'outcome') {
+    ev.paRow = outcomePaRow(game, state, data, ev);
+    // The ball-in-play pitch row gets the result too.
+    const pitch = current.events.find((e) => e.id === data.pitchId);
+    if (pitch?.row) changed.push(withRow(pitch, { pa_result: data.result }));
+  } else if (type === 'nextBatter') {
+    const pa = nextBatterPaRow(game, state, data.reason, ev);
+    if (pa) ev.paRow = pa;
   }
-  await db.putEvent(ev); // committed to disk before we move on
+  if (ev.paRow) ev.paRow.recorded_by = recorderLabel();
+  if (ev.row || ev.paRow) ev.dirty = 1;
+  await db.putEvents([ev, ...changed]); // committed to disk before we move on
+  replaceEvents(changed);
   current.events.push(ev);
-  current.state = replay(current.game, current.events);
+  current.state = replay(game, current.events);
   return ev;
+}
+
+// A copy of a pitch event with its sheet row changed, queued for upload again.
+function withRow(ev, patch) {
+  return { ...ev, row: { ...ev.row, ...patch }, rev: ev.rev + 1, dirty: 1 };
+}
+
+function replaceEvents(updated) {
+  const byId = new Map(updated.map((e) => [e.id, e]));
+  current.events = current.events.map((e) => byId.get(e.id) || e);
 }
 
 function dots(n, max, cls) {
@@ -311,41 +357,86 @@ function padGroup(title, group, options, cols) {
     </div></section>`;
 }
 
+const teamLabel = (state, i) => esc(state.teams[i].name || (i ? 'Home' : 'Away'));
+
+// The ball-in-play decision tree: category → detail → fielder. The pitch is already
+// saved; the outcome is saved as its own event once the last choice is made.
+function treeHTML() {
+  const { state } = current;
+  const batter = playerLabel(currentBatter(state));
+  let title; let pads; let cols;
+  if (!tree.category) {
+    title = `Ball in play: ${batter}`;
+    cols = 'tree-5';
+    pads = Object.entries(OUTCOME_TREE).map(([k, c]) => [k, c.label, 'tree-cat']);
+  } else if (!tree.result) {
+    const c = OUTCOME_TREE[tree.category];
+    title = c.label;
+    const opts = Object.entries(c.options);
+    cols = `tree-${opts.length}`;
+    pads = opts.map(([k, o]) => [k, o.short || o.label, 'tree-result']);
+  } else {
+    title = `${PA_RESULTS[tree.result].label}: where did the ball go?`;
+    cols = 'tree-fielder';
+    // Laid out roughly like the field, outfield at the top.
+    pads = ['LF', 'CF', 'RF', '3B', 'SS', '2B', 'P', 'C', '1B'].map((f) => [f, f, 'tree-fielder']);
+    pads.push(['', 'Skip', 'tree-fielder skip']);
+  }
+  return `<section class="group group-outcome">
+    <div class="tree-head">
+      ${tree.category ? '<button data-act="tree-back" class="tree-back" aria-label="Back">‹ Back</button>' : ''}
+      <h3>${title}</h3>
+    </div>
+    <div class="pads tree-pads ${cols}">
+      ${pads.map(([value, label, act]) => `<button class="pad ${act.includes('skip') ? 'skip' : ''}" data-act="${act.split(' ')[0]}" data-value="${value}">${label}</button>`).join('')}
+    </div></section>`;
+}
+
 function renderTracker() {
-  const { game, state } = current;
-  const batter = state.lineup[state.slot];
-  const onDeck = state.lineup[(state.slot + 1) % state.lineup.length];
+  const { state } = current;
+  const bi = battingIndex(state);
+  const bt = battingTeam(state);
+  const two = state.teams.length > 1;
+  const batter = currentBatter(state);
+  const onDeck = bt.lineup[(bt.slot + 1) % bt.lineup.length];
+  const pitcher = fieldingTeam(state).pitcher;
+  const pending = !!state.pending;
+  if (!pending) tree = { category: null, result: null };
   app.classList.add('tracker-mode');
   app.innerHTML = `
     <header class="scorebar">
       <button class="icon" data-act="menu" aria-label="Menu">☰</button>
-      <div class="count" aria-label="Count ${state.balls} balls ${state.strikes} strikes">
+      <div class="count" aria-label="Count ${state.balls} balls ${state.strikes} strikes, ${state.outs} out">
         <div class="count-num">${state.balls}<span>-</span>${state.strikes}</div>
-        <div class="count-dots"><span>B ${dots(state.balls, 3, 'ball')}</span><span>S ${dots(state.strikes, 2, 'strike')}</span></div>
+        <div class="count-dots"><span>B ${dots(state.balls, 3, 'ball')}</span><span>S ${dots(state.strikes, 2, 'strike')}</span><span>O ${dots(state.outs, 2, 'out')}</span></div>
       </div>
       ${badgeHTML(getSyncStatus(), true)}
     </header>
     <div class="batter-bar">
-      <div class="batter-row">
-        <div class="batter-name"><span class="label">Batting ${state.slot + 1}</span> <strong>${playerLabel(batter)}</strong>
-          <span class="muted"> · PA ${state.paNumber}</span></div>
-        <div class="inning" aria-label="Inning ${state.inning}">
-          <button data-act="inning" data-delta="-1" aria-label="Previous inning">−</button>
-          <span><small>INN</small>${state.inning}</span>
-          <button data-act="inning" data-delta="1" aria-label="Next inning">+</button>
-        </div>
+      <div class="batter-name"><span class="label">${two ? `${halfLabel(state)} ${teamLabel(state, bi)} · ` : ''}Batting ${bt.slot + 1}</span>
+        <strong>${playerLabel(batter)}</strong><span class="muted"> · PA ${state.paNumber}</span></div>
+      <div class="stepper inning" aria-label="Inning ${two ? halfLabel(state) : state.inning}">
+        <button data-act="half" data-delta="-1" aria-label="Previous ${two ? 'half-inning' : 'inning'}" ${pending ? 'disabled' : ''}>−</button>
+        <span><small>INN</small>${two ? halfLabel(state) : state.inning}</span>
+        <button data-act="half" data-delta="1" aria-label="Next ${two ? 'half-inning' : 'inning'}" ${pending ? 'disabled' : ''}>+</button>
       </div>
       <div class="last ${current.last?.paEnd ? 'pa-end' : ''}">${current.last?.html || '&nbsp;'}</div>
-      <div class="muted small">On deck: ${playerLabel(onDeck)}${state.pitcher ? ` · P: ${esc(state.pitcher)} (${state.pitcherPitches})` : ` · ${state.pitchNumber} pitches`}</div>
+      <div class="muted small deck">On deck: ${playerLabel(onDeck)}${pitcher ? ` · P: ${esc(pitcher)} (${fieldingTeam(state).pitcherPitches})` : ` · ${state.pitchNumber} pitches`}</div>
+      <div class="stepper outs" aria-label="${state.outs} out">
+        <button data-act="outs" data-delta="-1" aria-label="One out fewer" ${pending || !state.outs ? 'disabled' : ''}>−</button>
+        <span><small>OUTS</small>${state.outs}</span>
+        <button data-act="outs" data-delta="1" aria-label="One more out" ${pending ? 'disabled' : ''}>+</button>
+      </div>
     </div>
-    <main class="tracker">
+    <main class="tracker ${pending ? 'tree' : ''}">
+      ${pending ? treeHTML() : `
       ${padGroup('Pitch', 'pitchType', { FB: 'Fastball', CB: 'Curveball' }, 2)}
       ${padGroup('Zone', 'zone', { IN: 'In', OUT: 'Out' }, 2)}
-      ${padGroup('Batter', 'action', { TAKE: 'Take', SWING: 'Swing', FOUL: 'Foul', IN_PLAY: 'In play' }, 4)}
+      ${padGroup('Batter', 'action', { TAKE: 'Take', SWING: 'Swing', FOUL: 'Foul', IN_PLAY: 'In play' }, 4)}`}
     </main>
     <footer class="actions">
       <button data-act="undo" ${activeEvents(current.events).length ? '' : 'disabled'}>↶ Undo</button>
-      <button data-act="next">Next batter ›</button>
+      <button data-act="next" ${pending ? 'disabled' : ''}>Next batter ›</button>
       <button data-act="lineup">Lineup / Subs</button>
       <button data-act="log">Log</button>
     </footer>`;
@@ -369,14 +460,36 @@ async function handleTrackerClick(e) {
       await recordPitch(input);
     }
     renderTracker();
+  } else if (act === 'tree-cat') {
+    if (!current.state.pending) return; // a stale double-tap
+    tree = { category: btn.dataset.value, result: null };
+    const opts = Object.keys(OUTCOME_TREE[tree.category].options);
+    if (opts.length === 1) tree.result = opts[0]; // fielder's choice: nothing more to ask
+    renderTracker();
+  } else if (act === 'tree-result') {
+    if (!current.state.pending || !tree.category) return;
+    tree.result = btn.dataset.value;
+    renderTracker();
+  } else if (act === 'tree-fielder') {
+    if (!current.state.pending || !tree.result) return;
+    await recordOutcome({ ...tree, fielder: btn.dataset.value });
+    renderTracker();
+  } else if (act === 'tree-back') {
+    if (tree.result && Object.keys(OUTCOME_TREE[tree.category].options).length > 1) tree.result = null;
+    else tree = { category: null, result: null };
+    renderTracker();
   } else if (act === 'undo') {
     await undo();
   } else if (act === 'next') {
-    await addEvent('nextBatter', {});
-    current.last = { html: 'Moved to next batter', paEnd: false };
+    showNextBatterDialog();
+  } else if (act === 'half') {
+    await addEvent('half', { delta: Number(btn.dataset.delta) });
+    current.last = { html: `Now ${describeHalf()}`, paEnd: false };
     renderTracker();
-  } else if (act === 'inning') {
-    await addEvent('inning', { delta: Number(btn.dataset.delta) });
+  } else if (act === 'outs') {
+    const delta = Number(btn.dataset.delta);
+    await addEvent('outs', { delta });
+    current.last = { html: `${delta > 0 ? 'Added' : 'Removed'} an out${halfEndNote()}`, paEnd: false };
     renderTracker();
   } else if (act === 'lineup') {
     showLineupDialog();
@@ -389,26 +502,77 @@ async function handleTrackerClick(e) {
   }
 }
 
+function describeHalf(state = current.state) {
+  if (state.teams.length < 2) return `inning ${state.inning}`;
+  return `${state.half === 'bottom' ? 'bottom' : 'top'} ${state.inning}, ${teamLabel(state, battingIndex(state))} batting`;
+}
+
+// After an event: if it made the third out, say so (and pop a toast: the batting team changed).
+function halfEndNote() {
+  if (!current.state.lastHalfEnd) return '';
+  toast(`3 outs · ${describeHalf()}`, 'pa-end');
+  return ` · <b>3 outs</b> → ${describeHalf()}`;
+}
+
 async function recordPitch(input) {
   const ev = await addEvent('pitch', input);
   const r = ev.row;
   let msg = `Last: ${PITCH_TYPES[input.pitchType]} · ${input.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[input.action]} → <b>${RESULT_LABELS[r.result]}</b>`;
-  if (r.pa_end) {
-    msg += ` · <b>${PA_END_LABELS[r.pa_end]}</b>`;
+  if (r.pa_end && r.pa_end !== 'in_play') {
+    msg += ` · <b>${PA_END_LABELS[r.pa_end]}</b>${halfEndNote()}`;
   }
   current.last = { html: msg, paEnd: !!r.pa_end };
   await refreshPending();
   syncSoon();
 }
 
+async function recordOutcome({ category, result, fielder }) {
+  const ev = await addEvent('outcome', { pitchId: current.state.pending.pitchId, category, result, fielder });
+  const p = ev.paRow;
+  current.last = {
+    html: `<b>${esc(p.batter)}: ${PA_RESULTS[result].label}${fielder ? ` (${esc(fielder)})` : ''}</b>${halfEndNote()}`,
+    paEnd: true,
+  };
+  tree = { category: null, result: null };
+  await refreshPending();
+  syncSoon();
+}
+
+function showNextBatterDialog() {
+  const batter = playerLabel(currentBatter(current.state));
+  openDialog(`
+    <h2>Next batter: why?</h2>
+    <p class="muted small">${batter}'s plate appearance ends without a pitch result.</p>
+    <div class="menu reasons">
+      ${Object.entries(NEXT_BATTER_REASONS).map(([k, r]) => `<button data-act="reason" data-reason="${k}" class="${k === 'other' ? '' : 'primary'}">${r.label}${r.outs ? ' <span class="muted-on">· 1 out</span>' : ''}</button>`).join('')}
+      <button data-act="close">Cancel</button>
+    </div>
+    <p class="muted small">“Other / correction” only moves to the next batter and records no result.</p>`, (act, btn, dlg) => {
+    if (act !== 'reason') return;
+    dlg.close();
+    queue = queue.then(async () => {
+      const reason = btn.dataset.reason;
+      const ev = await addEvent('nextBatter', { reason });
+      current.last = ev.paRow
+        ? { html: `<b>${esc(ev.paRow.batter)}: ${PA_RESULTS[reason].label}</b>${halfEndNote()}`, paEnd: true }
+        : { html: 'Moved to next batter', paEnd: false };
+      renderTracker();
+      if (ev.paRow) { await refreshPending(); syncSoon(); }
+    }).catch((err) => toast(`Error: ${esc(err.message)}`, 'error'));
+  });
+}
+
 function describeEvent(ev) {
   switch (ev.type) {
     case 'pitch': return `pitch (${PITCH_TYPES[ev.data.pitchType]}, ${ACTIONS[ev.data.action]})`;
-    case 'nextBatter': return 'next batter';
+    case 'outcome': return `result (${PA_RESULTS[ev.data.result]?.label || ev.data.result})`;
+    case 'nextBatter': return ev.data.reason && ev.data.reason !== 'other'
+      ? `next batter (${NEXT_BATTER_REASONS[ev.data.reason].label})` : 'next batter';
     case 'setBatter': return 'batter change';
     case 'sub': return `substitution (${esc(ev.data.name)})`;
     case 'pitcher': return `pitcher change (${esc(ev.data.name)})`;
-    case 'inning': return 'inning change';
+    case 'inning': case 'half': return 'inning change';
+    case 'outs': return 'out change';
     default: return ev.type;
   }
 }
@@ -416,19 +580,25 @@ function describeEvent(ev) {
 async function undo() {
   const last = activeEvents(current.events).at(-1);
   if (!last) return;
-  if (last.type === 'pitch') {
-    // Keep a tombstone so the row is marked deleted in the sheet too.
-    last.deleted = 1;
-    last.dirty = 1;
-    last.rev += 1;
-    last.row = { ...last.row, deleted: true };
-    await db.putEvent(last);
+  if (last.row || last.paRow) {
+    // Keep a tombstone so the rows are marked deleted in the sheet too.
+    const t = { ...last, deleted: 1, dirty: 1, rev: last.rev + 1 };
+    if (t.row) t.row = { ...t.row, deleted: true };
+    if (t.paRow) t.paRow = { ...t.paRow, deleted: true };
+    const writes = [t];
+    if (last.type === 'outcome') {
+      const pitch = current.events.find((e) => e.id === last.data.pitchId);
+      if (pitch?.row) writes.push(withRow(pitch, { pa_result: '' }));
+    }
+    await db.putEvents(writes);
+    replaceEvents(writes);
   } else {
     await db.deleteEvent(last.id);
     current.events = current.events.filter((e) => e !== last);
   }
   current.state = replay(current.game, current.events);
   sel = { pitchType: null, zone: null, action: null };
+  tree = { category: null, result: null };
   current.last = { html: `Undid ${describeEvent(last)}`, paEnd: false };
   renderTracker();
   await refreshPending();
@@ -437,18 +607,33 @@ async function undo() {
 
 function showLineupDialog() {
   const { state } = current;
-  const rows = state.lineup.map((p, i) => `
-    <div class="lineup-row">
-      <label class="slot-radio"><input type="radio" name="current" value="${i}" ${i === state.slot ? 'checked' : ''}><span>${i + 1}</span></label>
-      <input name="num${i}" class="num" inputmode="numeric" value="${esc(p.number)}" placeholder="#">
-      <input name="name${i}" value="${esc(p.name)}" autocapitalize="words">
-    </div>`).join('');
+  const bi = battingIndex(state);
+  const fi = fieldingIndex(state);
+  const two = state.teams.length > 1;
+  // Batting team first: that's where substitutions usually happen.
+  const order = two ? [bi, 1 - bi] : [0];
+  const sections = order.map((ti) => {
+    const t = state.teams[ti];
+    const rows = t.lineup.map((p, i) => `
+      <div class="lineup-row">
+        ${ti === bi
+          ? `<label class="slot-radio"><input type="radio" name="current" value="${i}" ${i === t.slot ? 'checked' : ''}><span>${i + 1}</span></label>`
+          : `<span class="slot">${i + 1}</span>`}
+        <input name="t${ti}_num${i}" class="num" inputmode="numeric" value="${esc(p.number)}" placeholder="#">
+        <input name="t${ti}_name${i}" value="${esc(p.name)}" autocapitalize="words">
+      </div>`).join('');
+    return `<fieldset class="team">
+      ${two ? `<legend>${teamLabel(state, ti)} <span class="muted">· ${ti === bi ? 'batting' : 'in the field'}</span></legend>` : ''}
+      ${rows}
+      <label>${two ? `${teamLabel(state, ti)} pitcher${ti === fi ? ' <span class="muted">(pitching now)</span>' : ''}` : 'Pitcher'}
+        <input name="t${ti}_pitcher" value="${esc(t.pitcher)}" autocapitalize="words"></label>
+    </fieldset>`;
+  }).join('');
   const dlg = openDialog(`
     <form method="dialog" id="lineup-form">
       <h2>Lineup &amp; substitutions</h2>
       <p class="muted small">Edit a name to substitute that spot. The selected circle is the current batter.</p>
-      ${rows}
-      <label>Pitcher<input name="pitcher" value="${esc(state.pitcher)}" autocapitalize="words"></label>
+      ${sections}
       <div class="row-buttons">
         <button type="button" data-act="close">Cancel</button>
         <button type="button" class="primary" data-act="save">Save</button>
@@ -457,19 +642,21 @@ function showLineupDialog() {
     if (act !== 'save') return;
     const f = new FormData(d.querySelector('form'));
     let changes = 0;
-    for (let i = 0; i < state.lineup.length; i++) {
-      const name = String(f.get(`name${i}`)).trim();
-      const number = String(f.get(`num${i}`)).trim();
-      const p = current.state.lineup[i];
-      if (name && (name !== p.name || number !== p.number)) {
-        await addEvent('sub', { slot: i, name, number, replaced: p.name });
-        changes++;
+    for (const ti of order) {
+      for (let i = 0; i < state.teams[ti].lineup.length; i++) {
+        const name = String(f.get(`t${ti}_name${i}`)).trim();
+        const number = String(f.get(`t${ti}_num${i}`)).trim();
+        const p = current.state.teams[ti].lineup[i];
+        if (name && (name !== p.name || number !== p.number)) {
+          await addEvent('sub', { team: ti, slot: i, name, number, replaced: p.name });
+          changes++;
+        }
       }
+      const pitcher = String(f.get(`t${ti}_pitcher`)).trim();
+      if (pitcher !== current.state.teams[ti].pitcher) { await addEvent('pitcher', { team: ti, name: pitcher }); changes++; }
     }
-    const pitcher = String(f.get('pitcher')).trim();
-    if (pitcher !== current.state.pitcher) { await addEvent('pitcher', { name: pitcher }); changes++; }
     const slot = Number(f.get('current'));
-    if (slot !== current.state.slot) { await addEvent('setBatter', { slot }); changes++; }
+    if (slot !== battingTeam(current.state).slot) { await addEvent('setBatter', { slot }); changes++; }
     d.close();
     if (changes) toast(`Saved ${changes} change${changes > 1 ? 's' : ''}`);
     renderTracker();
@@ -478,17 +665,24 @@ function showLineupDialog() {
 }
 
 function showLogDialog() {
-  const pitches = activeEvents(current.events).filter((e) => e.type === 'pitch').map((e) => e.row);
+  const active = activeEvents(current.events);
+  const pitches = active.filter((e) => e.type === 'pitch').map((e) => e.row);
+  // One entry per plate appearance: its pitches and, once it's over, its result.
   const byPa = new Map();
-  for (const r of pitches) {
-    if (!byPa.has(r.pa_number)) byPa.set(r.pa_number, []);
-    byPa.get(r.pa_number).push(r);
+  const entry = (r) => {
+    if (!byPa.has(r.pa_number)) byPa.set(r.pa_number, { head: r, rows: [], pa: null });
+    return byPa.get(r.pa_number);
+  };
+  for (const e of active) {
+    if (e.row) entry(e.row).rows.push(e.row);
+    if (e.paRow) entry(e.paRow).pa = e.paRow;
   }
-  const items = [...byPa.entries()].reverse().map(([pa, rows]) => {
-    const first = rows[0];
-    const end = rows.at(-1).pa_end;
-    return `<li><div class="log-head"><strong>PA ${pa}</strong> · Inn ${first.inning} · ${first.batter_number ? `#${esc(first.batter_number)} ` : ''}${esc(first.batter)}
-        ${end ? `<span class="tag">${PA_END_LABELS[end]}</span>` : ''}</div>
+  const where = (r) => (r.half ? `${r.half === 'bottom' ? '▼' : '▲'}${r.inning} ${esc(r.batting_team)}` : `Inn ${r.inning}`);
+  const items = [...byPa.entries()].reverse().map(([pa, { head, rows, pa: p }]) => {
+    const end = rows.at(-1)?.pa_end;
+    const tag = p ? `${p.result_label}${p.fielder ? ` (${esc(p.fielder)})` : ''}` : (end ? PA_END_LABELS[end] : '');
+    return `<li><div class="log-head"><strong>PA ${pa}</strong> · ${where(head)} · ${head.batter_number ? `#${esc(head.batter_number)} ` : ''}${esc(head.batter)}
+        ${tag ? `<span class="tag">${tag}</span>` : ''}</div>
       <ol>${rows.map((r) => `<li>${r.balls_before}-${r.strikes_before} · ${r.pitch_type} · ${r.zone === 'IN' ? 'In' : 'Out'} · ${ACTIONS[r.action]} → ${RESULT_LABELS[r.result]}</li>`).join('')}</ol></li>`;
   }).join('');
   openDialog(`
@@ -501,10 +695,11 @@ function showMenu() {
   const s = getSyncStatus();
   openDialog(`
     <h2>${esc(current.game.gameId)}</h2>
-    <p>${s.pending ? `<strong>${s.pending} pitch${s.pending > 1 ? 'es' : ''} not uploaded yet.</strong> Back up if you have no signal.` : 'All pitches are uploaded.'}</p>
+    <p>${s.pending ? `<strong>${s.pending} change${s.pending > 1 ? 's' : ''} not uploaded yet.</strong> Back up if you have no signal.` : 'Everything is uploaded.'}</p>
     <div class="menu">
       <button data-act="backup" class="primary">Back up game (file)</button>
-      <button data-act="csv">Export CSV</button>
+      <button data-act="csv">Export pitches (CSV)</button>
+      <button data-act="pa-csv">Export plate appearances (CSV)</button>
       <button data-act="sync">Sync now</button>
       <button data-act="exit">Exit to games list</button>
       <button data-act="close">Close</button>
@@ -514,6 +709,8 @@ function showMenu() {
       if (r !== 'cancelled') toast('Backup created');
     } else if (act === 'csv') {
       await exportCSV(current.game, current.events);
+    } else if (act === 'pa-csv') {
+      await exportPaCSV(current.game, current.events);
     } else if (act === 'sync') {
       dlg.close();
       await syncNow();

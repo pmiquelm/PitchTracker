@@ -16,7 +16,7 @@ test('testConnection posts an empty upload with the token', async (t) => {
   let sent;
   t.mock.method(globalThis, 'fetch', async (url, opts) => {
     sent = { url, opts };
-    return new Response(JSON.stringify({ ok: true, received: 0 }));
+    return new Response(JSON.stringify({ ok: true, version: 2, received: 0 }));
   });
   await testConnection(URL, 'tok');
   assert.equal(sent.url, URL);
@@ -30,4 +30,9 @@ test('testConnection reports a wrong token and an HTML page', async (t) => {
   t.mock.restoreAll();
   t.mock.method(globalThis, 'fetch', async () => new Response('<html>Sign in</html>'));
   await assert.rejects(testConnection(URL, 'tok'), /page instead of data/);
+});
+
+test('testConnection says when the sheet script is too old', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ ok: true, received: 0 })));
+  await assert.rejects(testConnection(URL, 'tok'), /out of date/);
 });

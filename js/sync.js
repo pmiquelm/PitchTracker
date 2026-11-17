@@ -8,6 +8,10 @@ const BATCH_SIZE = 200;
 // Longer than the server's lock wait (Code.gs), so a busy sheet answers with a
 // clear error instead of the request being cut off.
 const TIMEOUT_MS = 30000;
+// The sheet script must be at least this version (it reports it in every reply).
+// Older scripts don't know the PlateAppearances sheet or the new columns.
+export const SCRIPT_VERSION = 2;
+const OUTDATED = 'The sheet script is out of date: paste the new Code.gs, run setup, then Deploy → Manage deployments → Edit → New version';
 
 let status = { pending: 0, syncing: false, configured: false, error: null, lastSync: null };
 const listeners = new Set();
@@ -58,6 +62,7 @@ async function post(url, payload) {
     if (!res.ok) throw new Error(`The sheet script answered HTTP ${res.status}`);
     const body = await res.json();
     if (!body.ok) throw new Error(body.error || 'Server error');
+    if (!(body.version >= SCRIPT_VERSION)) throw new Error(OUTDATED);
     return body;
   } finally {
     clearTimeout(t);
@@ -77,7 +82,12 @@ export async function syncNow() {
     for (let guard = 0; guard < 100; guard++) {
       const batch = await db.getDirty(BATCH_SIZE);
       if (!batch.length) break;
-      await post(url, { token, rows: batch.map((e) => e.row) });
+      // Pitches go to the Pitches sheet, finished plate appearances to PlateAppearances.
+      await post(url, {
+        token,
+        rows: batch.filter((e) => e.row).map((e) => e.row),
+        pas: batch.filter((e) => e.paRow).map((e) => e.paRow),
+      });
       await db.markClean(batch);
       await refreshPending();
     }

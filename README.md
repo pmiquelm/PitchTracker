@@ -13,13 +13,20 @@ The data goes into a Google Sheet that other people can open, filter and build d
   The pitch is saved as soon as all three are chosen. Pads can be tapped in any order, and tapping a pad again unselects it.
 - **The count updates automatically.** A take in the zone is a called strike and a take out of the zone is a ball.
   A swing is always a strike. A foul is a strike unless there are already two.
-- **Next batter is automatic** on a walk (ball four), a strikeout (strike three) or a ball in play.
-  Use **Next batter ›** by hand for anything else (hit by pitch, intentional walk…).
-- **Lineup / Subs:** rename a lineup spot to make a substitution, change the pitcher, or pick the current batter to fix a mistake.
+- **Both teams.** Enter the away and home lineups (or leave the opponent blank: they become *Batter 1–9*) and each team's pitcher.
+  The away team bats in the top of each inning, the home team in the bottom; each keeps its own place in the order and its own pitch count.
+- **Ball in play → outcome pads.** After *In play* the pads turn into a decision tree of big buttons:
+  **Hit** (single / double / triple / home run), **Out** (ground / line / fly out, double play), **Fielder's choice**,
+  **Sac** (bunt / fly) or **Error** (on a grounder / liner / fly), then **where the ball went** (P, C, 1B … RF, or Skip).
+  **‹ Back** goes up a level. Each result is saved as a row in the **PlateAppearances** tab.
+- **Outs and half-innings are automatic.** Strikeouts, outs, sacs and fielder's choices add one out, a double play two.
+  At three outs the other team comes up. Use **Outs − / +** for anything else (caught stealing, pickoff, a runner thrown out on a hit)
+  and **Inning − / +** (one half-inning per tap) to correct.
+- **Next batter is automatic** on a walk, a strikeout or a ball in play. **Next batter ›** asks why:
+  *Hit by pitch*, *Intentional walk*, *Catcher's interference*, *Out by rule* (adds an out) or *Other / correction* (records nothing).
+- **Lineup / Subs:** rename a lineup spot (either team) to make a substitution, change either pitcher, or pick the current batter to fix a mistake.
   A sub in the middle of a plate appearance keeps the count.
-- **Undo** reverses the last action of any kind. An undone pitch stays in the sheet with `deleted = TRUE`.
-- **Inning − / +** is set by hand and saved on each pitch.
-- Outcomes (hit, out…) are **not** recorded. Join them later from the official play-by-play using `game_id` + `pa_number`.
+- **Undo** reverses the last action of any kind. An undone pitch or result stays in the sheet with `deleted = TRUE`.
 
 ## How your data is kept safe
 
@@ -45,7 +52,7 @@ After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
 2. Delete the sample code and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs). Save.
 3. Choose the **`setup`** function in the toolbar and click **Run**. Approve the permissions: it's your own script, so click
    *Advanced → Go to project* if Google warns you.
-   This creates the **Pitches** and **Summary** tabs. Open **Execution log** and copy the **TOKEN**.
+   This creates the **Pitches**, **PlateAppearances** and **Summary** tabs. Open **Execution log** and copy the **TOKEN**.
 4. **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as*: **Me**, *Who has access*: **Anyone**. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 5. Open the app's URL in **Safari** → **Settings**, paste the URL and token, **Save**, then **Test connection**.
 
@@ -91,6 +98,12 @@ The Action only replaces `Code.gs`. It stops without changing anything if your s
 doesn't run `setup`: if the sheet's columns change, run `setup` by hand once after the deploy. If it starts failing
 with an authentication error, repeat step 2 and update `CLASPRC_JSON`.
 
+**Updating from the one-team version:** paste the new `Code.gs`, run **`setup`** again, then *Manage deployments → Edit → New version*.
+`setup` keeps a copy of your old Pitches tab (*Pitches (before update …)*) and moves the existing rows into the new columns.
+Until the script is updated, the app keeps everything on the phone and shows *the sheet script is out of date*; nothing is lost.
+With **automatic script updates** (below), the new code is deployed for you, but you still have to open the Apps Script editor and
+run **`setup`** once: until then uploads are refused with *run setup() in the sheet script again* and wait on the phones.
+
 ### 3. Install it on the iPhone / iPad
 
 1. **After** connecting in step 2, the app's home screen in Safari shows *Install on this phone*. Tap **Copy setup link**.
@@ -122,19 +135,24 @@ game to the games list.
 
 ### 5. Dashboard
 
-- The **Summary** tab has starter pivots: pitches by pitcher and type, batter action by pitch type, and zone by pitch type.
+- The **Summary** tab has starter pivots: pitches by pitcher and type, batter action by pitch type, zone by pitch type,
+  ball-in-play results by pitch type, results by batter and results against each pitcher.
 - For a proper dashboard, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
-  Add a filter `deleted = false`.
+  Add a filter `deleted = false`. Add the **PlateAppearances** tab as a second source for results.
 
 ## Sheet columns
+
+**Pitches** (one row per pitch):
 
 | column | meaning |
 |---|---|
 | `id` | unique pitch id |
 | `game_id` | entered at game setup |
 | `recorded_at` | when the pitch was entered |
-| `inning` | from the − / + control |
-| `pa_number` | plate appearance number in the game (1, 2, 3…) |
+| `inning`, `half` | inning and `top` / `bottom` |
+| `batting_team`, `pitching_team` | team names from setup |
+| `outs_before` | outs when the pitch was thrown |
+| `pa_number` | plate appearance number in the game (1, 2, 3…, both teams together) |
 | `pitch_number` / `pitch_in_pa` | pitch number in the game / in the plate appearance |
 | `lineup_slot`, `batter_number`, `batter` | the batter |
 | `pitcher`, `pitcher_pitch_count` | the pitcher and their pitch count including this pitch |
@@ -144,16 +162,31 @@ game to the games list.
 | `action` | `TAKE` / `SWING` / `FOUL` / `IN_PLAY` |
 | `result` | `ball`, `called_strike`, `swinging_strike`, `foul`, `in_play` |
 | `pa_end` | `walk`, `strikeout`, `in_play` or empty |
+| `pa_result` | on the last pitch of a plate appearance: its result code (`K`, `BB`, `2B`, `GO`…) |
 | `deleted` | TRUE if undone in the app |
 | `recorded_by` | the recorder's name from Settings, or `device-xxxxxx` |
 | `synced_at` | when the sheet last received the row |
+
+**PlateAppearances** (one row per finished plate appearance), with the same `id` … `pitcher` situation columns plus:
+
+| column | meaning |
+|---|---|
+| `pitches` | pitches in the plate appearance |
+| `balls`, `strikes` | the count on the last pitch |
+| `result` | `1B` `2B` `3B` `HR` · `GO` `LO` `FO` `DP` · `FC` · `SAC_BUNT` `SAC_FLY` · `E_GROUND` `E_LINE` `E_FLY` · `K` `BB` · `HBP` `IBB` `CI` `OUT_RULE` |
+| `result_label` | the same in words (`Double`, `Fly out`…) |
+| `category` | `hit`, `out`, `fc`, `sac`, `error`, `strikeout`, `walk`, `hbp`, `interference` |
+| `batted_ball` | `ground`, `line`, `fly`, `bunt` where the choice says so |
+| `fielder` | `P` `C` `1B` `2B` `3B` `SS` `LF` `CF` `RF`, or empty if skipped |
+| `outs_on_play` | outs the app counted for the play |
+| `deleted`, `recorded_by`, `synced_at` | as above |
 
 ## Development
 
 No build step and no dependencies: plain HTML, CSS and JavaScript modules.
 
 ```bash
-npm test                      # game-logic unit tests (Node 18+)
+npm test                      # game-logic, sheet-script and setup-link unit tests (Node 18+)
 python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
@@ -163,7 +196,7 @@ node tests/e2e.cjs /tmp/shots   # browser test; needs Playwright and the server 
 
 | file | role |
 |---|---|
-| `js/game.js` | count, plate-appearance and lineup rules (pure, unit-tested) |
+| `js/game.js` | count, outs, half-inning, outcome and lineup rules for both teams (pure, unit-tested) |
 | `js/db.js` | local storage (IndexedDB). The only file to swap for SQLite if wrapped as a native app with Capacitor |
 | `js/sync.js` | upload queue to the Google Sheet |
 | `js/backup.js` | export/import of backup files and CSV |
