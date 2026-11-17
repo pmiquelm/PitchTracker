@@ -51,7 +51,7 @@ function load(sheets = {}) {
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k), setProperty: (k, v) => props.set(k, v) }) },
     Utilities: { getUuid: () => 'uuid', formatDate: () => '2026-11-17 10-00' },
     Logger: { log() {} },
-    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
     ContentService: { createTextOutput: (t) => ({ setMimeType: () => JSON.parse(t) }), MimeType: { JSON: 'json' } },
   };
   vm.createContext(ctx);

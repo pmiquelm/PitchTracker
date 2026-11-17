@@ -1,7 +1,7 @@
 // Service worker: makes the app open with no signal.
 // Cache-first with a versioned cache. BUMP `VERSION` WHENEVER ANY APP FILE CHANGES,
 // otherwise installed copies keep running the old files.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = `pitchtracker-${VERSION}`;
 const ASSETS = [
   './',
