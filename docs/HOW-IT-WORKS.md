@@ -544,7 +544,7 @@ The badge comes in two sizes ([`badgeHTML`](../js/app.js#L61), text from [`syncS
 |---|---|---|
 | **All synced** (green) | **✓ Synced** | Nothing pending |
 | **Uploading N…** (blue) | **↻ N** | Upload in progress |
-| **N not uploaded: reason** (yellow) | **⚠ N** | Pending, and the last try failed: *No connection*, *Wrong token*, … |
+| **N not uploaded: reason** (yellow) | **⚠ N** | Pending, and the last try failed: *No connection* (device offline), *Couldn't reach the sheet script* (deployment access or address), *took too long*, *Wrong token*, … |
 | **No sheet connected** (grey) | **No sheet** | No sheet connected yet. Pitches are kept |
 
 On the tracker the badge is kept short so it never gets cut off; an early version showed the full text there, and on a phone it was truncated to "⚠ 5 not uploaded · …". **Tapping the badge** on any screen opens *Upload status* ([`showSyncDialog`](../js/app.js#L73)): the full message, the time of the last upload, **Upload now**, and, during a game, **Back up game (file)**.
