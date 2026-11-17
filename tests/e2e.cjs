@@ -19,11 +19,13 @@ const OUT = process.argv[2];
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
   });
   await page.goto('http://localhost:8765/');
-  await page.getByText('Settings').click();
+  await page.locator('[data-act=settings]').click();
   await page.fill('input[name=url]', 'https://script.google.com/macros/s/test/exec');
   await page.fill('input[name=token]', 'secret');
   await page.getByRole('button', { name: 'Save' }).click();
-  await page.click('[data-act=back]');
+  // In a browser tab, saving a connection puts the setup link in the address and reloads to home
+  await page.waitForURL(/#connect=/); await page.waitForSelector('text=New game');
+  const safariUrl = page.url();
   await page.getByText('New game').click();
   await page.fill('input[name=gameId]', '2026-11-16-HOME');
   await page.fill('input[name=pitcher]', 'Garcia');
@@ -99,9 +101,10 @@ const OUT = process.argv[2];
   // ---- Setup link: open link in a fresh "phone" -> connected, rows carry token + recorded_by
   const shareLink = await (async () => {
     await page.click('[data-act=menu]'); await page.click('dialog [data-act=exit]').catch(() => {});
-    await page.goto('http://localhost:8765/'); await page.getByText('Settings').click();
+    await page.goto('http://localhost:8765/'); await page.locator('[data-act=settings]').click();
     await page.fill('input[name=recorder]', 'Coach P'); await page.getByRole('button', { name: 'Save' }).click();
-    await page.waitForTimeout(300); await page.click('[data-act=back]'); await page.getByText('Settings').click();
+    await page.waitForTimeout(300); if (await page.locator('[data-act=back]').count()) await page.click('[data-act=back]');
+    await page.locator('[data-act=settings]').click();
     return page.inputValue('#setup-link');
   })();
   assert.match(shareLink, /^http:\/\/localhost:8765\/#connect=[\w-]+$/);
@@ -137,6 +140,23 @@ const OUT = process.argv[2];
   await p4.waitForSelector('text=Connected to the sheet');
   await p4.waitForFunction(() => !document.querySelector('.connect-box'));
   // Phone 1 rows carry the recorder name after it was set
+  // ---- iOS Home Screen: installed app has its own empty storage and opens the address saved at install
+  const installed = await browser.newContext({ ...devices['iPhone 14'] });
+  await installed.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
+  const p5 = await installed.newPage();
+  await p5.goto(safariUrl);
+  await p5.waitForSelector('text=Connected to the sheet');
+  assert.equal(await p5.locator('.connect-box').count(), 0);
+  assert.equal(await p5.locator('text=Install the app').count(), 0, 'no install notice inside the installed app');
+  const settingsUrl = await p5.evaluate(() => location.href);
+  assert.equal(settingsUrl, safariUrl, 'installed app does not rewrite its address');
+  // Installed app opened from a plain address (old install) -> paste box shown, no reload loop
+  const oldInstall = await browser.newContext({ ...devices['iPhone 14'] });
+  await oldInstall.addInitScript(() => Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true }));
+  const p6 = await oldInstall.newPage(); await p6.goto('http://localhost:8765/');
+  await p6.waitForSelector('.connect-box'); assert.equal(p6.url(), 'http://localhost:8765/');
+  const m = await (await p6.request.get('http://localhost:8765/manifest.webmanifest')).json();
+  assert.equal(m.start_url, undefined, 'manifest must not pin start_url');
   console.log('received rows (incl. resends):', received.length, 'errors:', errors);
   assert.deepEqual(errors.filter(e => !e.includes('INTERNET_DISCONNECTED')), []);
   console.log('E2E OK');
