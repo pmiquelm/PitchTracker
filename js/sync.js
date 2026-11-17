@@ -5,7 +5,9 @@
 import * as db from './db.js';
 
 const BATCH_SIZE = 200;
-const TIMEOUT_MS = 20000;
+// Longer than the server's lock wait (Code.gs), so a busy sheet answers with a
+// clear error instead of the request being cut off.
+const TIMEOUT_MS = 30000;
 
 let status = { pending: 0, syncing: false, configured: false, error: null, lastSync: null };
 const listeners = new Set();
@@ -33,6 +35,19 @@ export function syncSoon(delay = 300) {
   timer = setTimeout(syncNow, delay);
 }
 
+// Turns a failed request into a message a recorder can act on. Only a device
+// that reports itself offline is "No connection": fetch also throws TypeError
+// when Google answers with a sign-in or error page that lacks CORS headers.
+export function describeError(err, online = globalThis.navigator?.onLine !== false) {
+  if (!online) return 'No connection';
+  if (err?.name === 'AbortError') return 'The sheet took too long to answer. Try again';
+  if (err instanceof TypeError) {
+    return "Couldn't reach the sheet script. Check the web app is deployed with access \"Anyone\" and the address is current";
+  }
+  if (err instanceof SyntaxError) return 'The sheet script sent back a page instead of data. Check the deployment address';
+  return err?.message || String(err);
+}
+
 async function post(url, payload) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -40,7 +55,7 @@ async function post(url, payload) {
     // No custom headers -> text/plain "simple" request, which Apps Script accepts
     // without a CORS preflight.
     const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload), signal: ctrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`The sheet script answered HTTP ${res.status}`);
     const body = await res.json();
     if (!body.ok) throw new Error(body.error || 'Server error');
     return body;
@@ -68,16 +83,18 @@ export async function syncNow() {
     }
     emit({ syncing: false, error: null, lastSync: Date.now() });
   } catch (err) {
-    const offline = !navigator.onLine || err.name === 'AbortError' || err instanceof TypeError;
-    emit({ syncing: false, error: offline ? 'No connection' : err.message });
+    emit({ syncing: false, error: describeError(err) });
   }
 }
 
-export async function testConnection(url) {
-  const res = await fetch(url, { method: 'GET' });
-  const body = await res.json();
-  if (!body.ok) throw new Error(body.error || 'Unexpected response');
-  return body;
+// Checks the whole upload path (address, deployment access and token) with an
+// empty upload, which the script accepts without touching the sheet's rows.
+export async function testConnection(url, token) {
+  try {
+    return await post(url, { token, rows: [] });
+  } catch (err) {
+    throw new Error(describeError(err));
+  }
 }
 
 export function initSync() {

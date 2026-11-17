@@ -40,7 +40,8 @@ function toast(html, kind = '') {
   el.className = `show ${kind}`;
   el.innerHTML = html;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = ''; }, 2600);
+  // Errors stay up longer: they're often a sentence worth reading.
+  toastTimer = setTimeout(() => { el.className = ''; }, kind === 'error' ? 6000 : 2600);
 }
 
 // One-line summary of the sync state, used by the badge and the status dialog.
@@ -581,8 +582,15 @@ async function showSettings() {
     if (btn.dataset.act === 'back') showHome();
     if (btn.dataset.act === 'test') {
       const url = form.url.value.trim();
-      try { await testConnection(url); toast('Connection works ✓'); }
+      const token = form.token.value.trim();
+      if (!isValidScriptUrl(url)) { toast('Enter the Apps Script web app address first', 'error'); return; }
+      if (!token) { toast('Enter the token first', 'error'); return; }
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = 'Testing…';
+      try { await testConnection(url, token); toast('Connection works ✓'); }
       catch (err) { toast(`Connection failed: ${esc(err.message)}`, 'error'); }
+      finally { btn.disabled = false; btn.textContent = 'Test connection'; }
     }
     if (btn.dataset.act === 'share-link') shareSetupLink(buildSetupLink(appBaseUrl(), settingsCache));
     if (btn.dataset.act === 'show-qr') showQrDialog();

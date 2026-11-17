@@ -63,7 +63,10 @@ function doGet() {
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  // Wait less than the app's request timeout (30 s) so a busy sheet gets a clear
+  // answer, and stay inside try: an uncaught error returns Google's HTML error
+  // page, which the app can only see as a failed request.
+  if (!lock.tryLock(15000)) return json({ ok: false, error: 'Sheet busy (another upload is running). Try again' });
   try {
     const body = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
