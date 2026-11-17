@@ -52,7 +52,44 @@ After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
 "Anyone" means anyone with the URL can reach the script. Writes are refused without the token.
 Share the *sheet* with viewers as usual. They never need the URL or the token.
 
-If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → New version** so the URL stays the same.
+If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → New version** so the URL stays the same. Or set up
+[automatic script updates](#automatic-script-updates-optional) once and skip this.
+
+#### Automatic script updates (optional)
+
+A GitHub Action ([`.github/workflows/deploy-apps-script.yml`](.github/workflows/deploy-apps-script.yml)) can deploy
+`Code.gs` for you every time it changes on `main`, as a new version of your **existing** deployment, so the URL and
+setup links stay the same. From then on the repo is the source of truth: edits made in the Apps Script editor get
+overwritten on the next deploy.
+
+One-time setup:
+
+1. Turn on **Google Apps Script API** at <https://script.google.com/home/usersettings>.
+2. On a computer with Node.js, run `npx @google/clasp@3.4.1 login` and allow access in the browser. This creates a
+   file called `.clasprc.json` in your home folder.
+3. Find two IDs in the Apps Script editor:
+   - **Script ID**: ⚙ **Project Settings** → *IDs*.
+   - **Deployment ID**: **Deploy → Manage deployments** → your web app (it's the middle of the `/exec` URL).
+4. On GitHub: **Settings → Environments → New environment**, name it `apps-script`. Under *Deployment branches and
+   tags* choose **Selected branches and tags** and add `main`. Then add three **environment secrets**:
+
+   | Secret | Value |
+   |---|---|
+   | `CLASPRC_JSON` | The whole contents of `.clasprc.json` |
+   | `APPS_SCRIPT_ID` | The script ID |
+   | `APPS_SCRIPT_DEPLOYMENT_ID` | The deployment ID |
+
+5. **Actions → Deploy Apps Script → Run workflow** to deploy the current `Code.gs` once and check it works.
+
+The repo is public, but none of this is visible: secret values never show in the repo or the logs, and only workflows
+running on `main` can read them (not other branches, not pull requests from forks). The script still refuses uploads
+without the token, which never goes in the repo. Treat `CLASPRC_JSON` like a password: it can edit all your Apps
+Script projects. To cut it off, remove clasp's access at <https://myaccount.google.com/permissions> and delete the
+secret.
+
+The Action only replaces `Code.gs`. It stops without changing anything if your script project has other files, and it
+doesn't run `setup`: if the sheet's columns change, run `setup` by hand once after the deploy. If it starts failing
+with an authentication error, repeat step 2 and update `CLASPRC_JSON`.
 
 ### 3. Install it on the iPhone / iPad
 
