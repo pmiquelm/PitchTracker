@@ -1,8 +1,20 @@
-// Setup links: https://<app>/#connect=<code>
-// The code carries the Apps Script URL and token, base64url-encoded. It lives in
-// the URL fragment, which browsers never send to the server (GitHub Pages).
+// Setup links carry the sheet connection (Apps Script address + token) in the URL
+// fragment (after #), which browsers never send to the server (GitHub Pages).
+//
+//   Short form (current):  https://<app>/#c=<deployment id>.<token>
+//   Long form (old links): https://<app>/#connect=<base64url JSON {v, u, t}>
+//
+// The short form is used whenever the address is a standard Apps Script web app
+// address; anything else (e.g. Google Workspace domain addresses) uses the long form.
+// Both are always accepted.
 
-const PREFIX = 'connect=';
+const LONG = 'connect=';
+const SHORT = 'c=';
+const ID = '[A-Za-z0-9_-]{10,200}';
+const TOKEN = '[A-Za-z0-9_-]{8,200}';
+const STANDARD_URL = new RegExp(`^https://script\\.google\\.com/macros/s/(${ID})/exec$`);
+const WORKSPACE_URL = new RegExp(`^https://script\\.google\\.com/a/macros/[A-Za-z0-9.-]{1,253}/s/${ID}/exec$`);
+const SHORT_CODE = new RegExp(`^(${ID})\\.(${TOKEN})$`);
 
 function toBase64Url(text) {
   const bytes = new TextEncoder().encode(text);
@@ -17,37 +29,68 @@ function fromBase64Url(code) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+// Only exact Apps Script web app addresses: https, script.google.com, the /exec
+// path, and nothing else (no port, login, query or fragment that could smuggle
+// the pitches somewhere else).
 export function isValidScriptUrl(url) {
-  try {
-    const u = new URL(url);
-    return u.protocol === 'https:' && u.hostname === 'script.google.com';
-  } catch {
-    return false;
-  }
+  return typeof url === 'string' && (STANDARD_URL.test(url) || WORKSPACE_URL.test(url));
 }
+
+const isValidToken = (t) => typeof t === 'string' && new RegExp(`^${TOKEN}$`).test(t);
 
 export function encodeConnect({ url, token }) {
-  return toBase64Url(JSON.stringify({ v: 1, u: url, t: token }));
+  const m = STANDARD_URL.exec(url);
+  if (m && isValidToken(token)) return `${SHORT}${m[1]}.${token}`;
+  return `${LONG}${toBase64Url(JSON.stringify({ v: 1, u: url, t: token }))}`;
 }
 
-// Accepts a full link, a "#connect=..." fragment, or the bare code.
-// Returns { url, token, code } or null if it isn't a valid setup link.
-export function decodeConnect(input) {
-  if (!input) return null;
-  let s = String(input).trim();
-  const i = s.indexOf(PREFIX);
-  if (i >= 0) s = s.slice(i + PREFIX.length);
-  s = s.split(/[&\s]/)[0];
+function decodeShort(code) {
+  const m = SHORT_CODE.exec(code);
+  if (!m) return null;
+  return { url: `https://script.google.com/macros/s/${m[1]}/exec`, token: m[2], code };
+}
+
+function decodeLong(code) {
   try {
-    const data = JSON.parse(fromBase64Url(s));
-    if (data.v !== 1 || !isValidScriptUrl(data.u) || typeof data.t !== 'string' || !data.t) return null;
-    return { url: data.u, token: data.t, code: s };
+    const data = JSON.parse(fromBase64Url(code));
+    if (data.v !== 1 || !isValidScriptUrl(data.u) || !isValidToken(data.t)) return null;
+    return { url: data.u, token: data.t, code };
   } catch {
     return null;
   }
 }
 
+// Accepts a full link, a "#c=…" / "#connect=…" fragment, or a bare code.
+// Returns { url, token, code } or null if it isn't a valid setup link.
+export function decodeConnect(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  const long = /(?:^|[#&?])connect=([^&\s#]+)/.exec(s);
+  if (long) return decodeLong(long[1]);
+  const short = /(?:^|[#&?])c=([^&\s#]+)/.exec(s);
+  if (short) return decodeShort(short[1]);
+  return decodeShort(s) || decodeLong(s); // bare code
+}
+
 export function buildSetupLink(baseUrl, settings) {
   const base = String(baseUrl).split('#')[0];
-  return `${base}#${PREFIX}${encodeConnect(settings)}`;
+  return `${base}#${encodeConnect(settings)}`;
+}
+
+export const isSetupLinkHash = (hash) => /(?:^|[#&])(c|connect)=/.test(hash || '');
+
+// A short, human-checkable code for a sheet ("K7Q-X2M"): the first 30 bits of a
+// SHA-256 of the script address. The owner's phone and the phone being connected
+// show the same code, so a link or QR code that points somewhere else is spotted
+// by comparing them out loud. Not secret; it identifies the sheet, not the token.
+const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 symbols, no 0/O or 1/I
+
+export async function sheetCode(url) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url)));
+  let bits = 0;
+  for (let i = 0; i < 4; i++) bits = (bits << 8) | digest[i];
+  bits >>>= 2; // keep the top 30 bits
+  let out = '';
+  for (let i = 0; i < 6; i++) out = ALPHABET[(bits >>> (5 * i)) & 31] + out;
+  return `${out.slice(0, 3)}-${out.slice(3)}`;
 }

@@ -5,7 +5,8 @@ import {
 } from './game.js';
 import { initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection } from './sync.js';
 import { backupJSON, exportCSV, importBackup } from './backup.js';
-import { buildSetupLink, decodeConnect } from './connect.js';
+import { buildSetupLink, decodeConnect, isSetupLinkHash, isValidScriptUrl, sheetCode } from './connect.js';
+import qrcodegen from './vendor/qrcodegen.js';
 
 const app = document.getElementById('app');
 const LINEUP_SIZE = 9;
@@ -17,7 +18,7 @@ let settingsCache = {}; // { url, token, recorder, deviceId, appliedLink }
 let updateReady = false;  // a new version has taken over; reload at the next safe moment
 // How this launch was opened, with any token hidden. Shown in Settings to diagnose installs.
 const launchAddress = location.origin + location.pathname
-  + (location.search ? '?…' : '') + (location.hash.includes('connect=') ? '#connect=…' : location.hash);
+  + (location.search ? '?…' : '') + (isSetupLinkHash(location.hash) ? '#c=… (setup link)' : location.hash);
 
 // ---------- helpers ----------
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -129,7 +130,7 @@ async function showHome() {
           <em>Copy setup link</em> on the app's home screen.</p>
         <button class="big primary" data-act="paste-connect">Paste &amp; connect</button>
         <p class="muted small">Or paste it here yourself:</p>
-        <input id="connect-input" placeholder="https://…#connect=…" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <input id="connect-input" placeholder="https://…#c=…" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="row-buttons"><button data-act="connect">Connect</button></div>
       </div>`}
       <button class="big primary" data-act="new">＋ New game</button>
@@ -540,7 +541,8 @@ async function showSettings() {
       <form id="settings">
         <h2>Google Sheet connection</h2>
         <label>Apps Script web app URL<input name="url" type="url" value="${esc(settings.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
-        <label>Token<input name="token" value="${esc(settings.token)}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Token <span class="muted">(hidden)</span><input name="token" class="secret" value="${esc(settings.token)}" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        ${settings.url ? '<p class="small">Sheet code: <strong class="sheet-code inline" id="my-sheet-code">…</strong></p>' : ''}
         <label>Your name <span class="muted">(saved on each pitch as recorded_by)</span><input name="recorder" value="${esc(settings.recorder)}" autocapitalize="words" placeholder="optional"></label>
         <div class="row-buttons">
           <button type="button" data-act="test">Test connection</button>
@@ -549,10 +551,13 @@ async function showSettings() {
       </form>
       <h2>Share with other recorders</h2>
       ${settings.url && settings.token ? `
-        <p class="muted small">Anyone who opens this link gets connected to this sheet and can add pitches to it. Share it only with people who record for you.
-        To let people <em>view</em> the data, share the Google Sheet itself instead.</p>
-        <input id="setup-link" readonly value="${esc(buildSetupLink(appBaseUrl(), settings))}">
-        <div class="row-buttons"><button data-act="share-link" class="primary">Share setup link</button></div>`
+        <p class="muted small">Anyone with this link or QR code can add pitches to this sheet. Share it only with people who
+        record for you. To let people <em>view</em> the data, share the Google Sheet itself instead.</p>
+        <p class="link-preview">${esc(appBaseUrl())}#c=•••••••• <span class="muted">(${buildSetupLink(appBaseUrl(), settings).length} characters)</span></p>
+        <div class="row-buttons">
+          <button data-act="share-link" class="primary">Share setup link</button>
+          <button data-act="show-qr">Show QR code</button>
+        </div>`
         : '<p class="muted small">Connect a sheet first, then you can share a setup link from here.</p>'}
       <h2>Use a setup link</h2>
       <input id="connect-input" placeholder="Paste a setup link" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -568,6 +573,7 @@ async function showSettings() {
       </ul>
     </main>`;
   appVersion().then((v) => { const el = document.getElementById('app-version'); if (el) el.textContent = v; });
+  if (settings.url) sheetCode(settings.url).then((c) => { const el = document.getElementById('my-sheet-code'); if (el) el.textContent = c; });
   const form = document.getElementById('settings');
   app.onclick = async (e) => {
     const btn = e.target.closest('[data-act]');
@@ -578,7 +584,8 @@ async function showSettings() {
       try { await testConnection(url); toast('Connection works ✓'); }
       catch (err) { toast(`Connection failed: ${esc(err.message)}`, 'error'); }
     }
-    if (btn.dataset.act === 'share-link') shareSetupLink(document.getElementById('setup-link').value);
+    if (btn.dataset.act === 'share-link') shareSetupLink(buildSetupLink(appBaseUrl(), settingsCache));
+    if (btn.dataset.act === 'show-qr') showQrDialog();
     if (btn.dataset.act === 'paste-link') pasteInto(document.getElementById('connect-input'));
     if (btn.dataset.act === 'connect') {
       if (await connectFromLink(document.getElementById('connect-input').value)) {
@@ -588,7 +595,17 @@ async function showSettings() {
   };
   form.onsubmit = async (e) => {
     e.preventDefault();
-    await updateSettings({ url: form.url.value.trim(), token: form.token.value.trim(), recorder: form.recorder.value.trim() });
+    const url = form.url.value.trim();
+    const token = form.token.value.trim();
+    if (url && !isValidScriptUrl(url)) {
+      toast('That isn\'t an Apps Script web app address (https://script.google.com/macros/s/…/exec)', 'error');
+      return;
+    }
+    if (token && !/^[A-Za-z0-9_-]{8,200}$/.test(token)) {
+      toast('The token should be the code from the script\'s execution log', 'error');
+      return;
+    }
+    await updateSettings({ url, token, recorder: form.recorder.value.trim() });
     if (await keepLinkInAddress()) { location.reload(); return; }
     toast('Saved');
     syncNow();
@@ -618,6 +635,29 @@ async function pasteInto(input) {
   }
 }
 
+// Asks before connecting to a sheet from a link or QR code. Resolves true to connect.
+async function confirmConnect(c) {
+  const code = await sheetCode(c.url);
+  const replacing = settingsCache.url ? await sheetCode(settingsCache.url) : null;
+  return new Promise((resolve) => {
+    let answer = false;
+    const dlg = openDialog(`
+      <h2>Connect to this sheet?</h2>
+      <p>Sheet code</p>
+      <p class="sheet-code">${code}</p>
+      <p class="small">Pitches recorded on this phone will be sent to this sheet. Only connect if you got the link or
+        QR code from the sheet's owner, and check this code matches the one in their <em>Settings</em>.</p>
+      ${replacing ? `<p class="small"><strong>This replaces the current connection</strong> (sheet ${replacing}).</p>` : ''}
+      <div class="row-buttons">
+        <button data-act="close">Cancel</button>
+        <button data-act="yes" class="primary">Connect</button>
+      </div>`, (act, btn, d) => {
+      if (act === 'yes') { answer = true; d.close(); }
+    });
+    dlg.addEventListener('close', () => resolve(answer));
+  });
+}
+
 // Saves the connection from a setup link. Returns true if connected.
 async function connectFromLink(text, { fromUrl = false } = {}) {
   const c = decodeConnect(text);
@@ -627,8 +667,11 @@ async function connectFromLink(text, { fromUrl = false } = {}) {
   }
   if (fromUrl && settingsCache.appliedLink === c.code) return false; // already applied
   const same = settingsCache.url === c.url && settingsCache.token === c.token;
-  if (!same && settingsCache.url && !confirm('Replace the current sheet connection with the one from this link?')) {
-    await updateSettings({ appliedLink: c.code });
+  // Never connect silently: a link or QR code from someone else could point this
+  // phone at their sheet. Show the sheet code so it can be compared with the owner's.
+  if (!same && !(await confirmConnect(c))) {
+    if (fromUrl) await updateSettings({ appliedLink: c.code }); // don't ask again at every launch
+    toast('Not connected');
     return false;
   }
   await updateSettings({ url: c.url, token: c.token, appliedLink: c.code });
@@ -648,8 +691,9 @@ async function connectFromLink(text, { fromUrl = false } = {}) {
 async function keepLinkInAddress() {
   if (isStandalone() || !settingsCache.url || !settingsCache.token) return false;
   const link = buildSetupLink(appBaseUrl(), settingsCache);
-  if (location.href === link) return false;
-  await updateSettings({ appliedLink: decodeConnect(link).code });
+  const decoded = decodeConnect(link);
+  if (!decoded || location.href === link) return false; // nothing valid to carry over
+  await updateSettings({ appliedLink: decoded.code });
   history.replaceState(null, '', link);
   return true;
 }
@@ -704,10 +748,63 @@ async function shareSetupLink(link) {
     await navigator.clipboard.writeText(link);
     toast('Setup link copied');
   } catch {
-    const input = document.getElementById('setup-link');
-    input.select();
-    toast('Select the link and copy it');
+    toast('Could not share or copy the link on this device', 'error');
   }
+}
+
+// The setup link as a QR code, drawn on this phone (no outside service), shown only
+// on request and only briefly: it closes after 60 s, when tapped closed, and as soon
+// as the app leaves the screen (switching apps, locking the phone).
+const QR_SECONDS = 60;
+
+function qrSvg(text) {
+  const qr = qrcodegen.QrCode.encodeText(text, qrcodegen.QrCode.Ecc.MEDIUM);
+  const border = 4;
+  const size = qr.size + border * 2;
+  let d = '';
+  for (let y = 0; y < qr.size; y++) {
+    for (let x = 0; x < qr.size; x++) {
+      if (qr.getModule(x, y)) d += `M${x + border},${y + border}h1v1h-1z`;
+    }
+  }
+  return `<svg class="qr" viewBox="0 0 ${size} ${size}" role="img" aria-label="QR code with the setup link"
+    shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+async function showQrDialog() {
+  if (!settingsCache.url || !settingsCache.token) return;
+  const code = await sheetCode(settingsCache.url);
+  let left = QR_SECONDS;
+  const dlg = openDialog(`
+    <h2>Scan to connect</h2>
+    <div class="qr-box">${qrSvg(buildSetupLink(appBaseUrl(), settingsCache))}</div>
+    <p class="center">Sheet code <strong class="sheet-code inline">${code}</strong> · closes in <span id="qr-left">${left}</span> s</p>
+    <ul class="small qr-rules">
+      <li>Lets a phone <strong>add pitches to your sheet</strong>: show it only to your recorders.</li>
+      <li>Scan with the phone's own <strong>Camera</strong> app, not a scanner app.</li>
+      <li>Don't screenshot or post it. The other phone must show the same sheet code.</li>
+    </ul>
+    <div class="row-buttons"><button data-act="close" class="primary">Close</button></div>`);
+  dlg.scrollTop = 0; // the browser focuses Close on open, which can scroll the code out of view
+  // Wipe the code from the page first, then close: removal is instant, not after the
+  // dialog's (asynchronous) close event.
+  const shut = () => { dlg.querySelector('.qr-box')?.replaceChildren(); if (dlg.open) dlg.close(); };
+  const timer = setInterval(() => {
+    left -= 1;
+    const el = dlg.querySelector('#qr-left');
+    if (el) el.textContent = left;
+    if (left <= 0) shut();
+  }, 1000);
+  const hide = () => { if (document.visibilityState === 'hidden') shut(); };
+  document.addEventListener('visibilitychange', hide);
+  window.addEventListener('pagehide', shut);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg || e.target.closest('[data-act="close"]')) shut(); }, true);
+  dlg.addEventListener('close', () => {
+    shut();
+    clearInterval(timer);
+    document.removeEventListener('visibilitychange', hide);
+    window.removeEventListener('pagehide', shut);
+  });
 }
 
 // ---------- boot ----------
@@ -728,7 +825,7 @@ async function boot() {
   if (!settingsCache.deviceId) await updateSettings({ deviceId: uuid() });
   // The link stays in the address bar on purpose: iOS keeps it when the page is
   // added to the Home Screen, so the installed app connects on first launch too.
-  if (location.hash.includes('connect=')) await connectFromLink(location.hash, { fromUrl: true });
+  if (isSetupLinkHash(location.hash)) await connectFromLink(location.hash, { fromUrl: true });
   if (await keepLinkInAddress()) { location.reload(); return; }
   // Android Back during a game: close an open dialog, or go back to the games list.
   // Pitches are already saved, so leaving the tracker never loses anything.
