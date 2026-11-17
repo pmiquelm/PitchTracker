@@ -11,14 +11,15 @@ const OUT = process.argv[2];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   const received = [];
+  const receivedPas = [];
   // Every new connection asks first and shows the sheet code
   const accept = async (pg) => { await pg.waitForSelector('text=Connect to this sheet?'); await pg.click('dialog [data-act=yes]'); };
   let serverUp = true;
   await ctx.route('https://script.google.com/**', async route => {
     if (!serverUp) return route.abort('internetdisconnected');
     const req = route.request();
-    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows); }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows); receivedPas.push(...b.pas); }
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
   });
   await page.goto('http://localhost:8765/');
   await page.locator('[data-act=settings]').click();
@@ -30,9 +31,10 @@ const OUT = process.argv[2];
   const safariUrl = page.url();
   await page.getByText('New game').click();
   await page.fill('input[name=gameId]', '2026-11-16-HOME');
-  await page.fill('input[name=pitcher]', 'Garcia');
+  await page.fill('input[name=t1_pitcher]', 'Garcia'); // the home pitcher faces the away lineup
+  await page.fill('input[name=t0_team]', 'Tigers');
   const names = ['Lopez','Smith','Jones','Kim','Diaz','Ruiz','Moore','Hill','Ortiz'];
-  for (let i = 0; i < 9; i++) { await page.fill(`input[name=name${i}]`, names[i]); await page.fill(`input[name=num${i}]`, String(10+i)); }
+  for (let i = 0; i < 9; i++) { await page.fill(`input[name=t0_name${i}]`, names[i]); await page.fill(`input[name=t0_num${i}]`, String(10+i)); }
   await page.screenshot({ path: OUT + '/1-setup.png' });
   await page.getByText('Start game').click();
   const pitch = async (t, z, a) => { for (const v of [t, z, a]) await page.click(`[data-act=pad][data-value=${v}]`); };
@@ -51,18 +53,35 @@ const OUT = process.argv[2];
   // Smith walks
   for (let i = 0; i < 4; i++) await pitch('FB','OUT','TAKE');
   await waitBatter(/Jones/);
-  // Jones: in play
+  // Jones: in play -> the decision tree replaces the pads until the outcome is chosen
   await pitch('CB','OUT','IN_PLAY');
-  await waitBatter(/Kim/);
-  // Undo the in-play -> back to Jones
+  await page.waitForSelector('.group-outcome');
+  assert.equal(await page.locator('[data-act=next]').isDisabled(), true, 'no next batter while an outcome is owed');
+  await page.click('[data-act=tree-cat][data-value=hit]');
+  await page.screenshot({ path: OUT + '/2b-tree-hit.png' });
+  await page.click('[data-act=tree-back]');
+  await page.click('[data-act=tree-cat][data-value=hit]');
+  await page.click('[data-act=tree-result][data-value="1B"]');
+  await page.screenshot({ path: OUT + '/2c-tree-fielder.png' });
+  await page.click('[data-act=tree-fielder][data-value=CF]');
+  await page.waitForSelector('.group-pitchType'); await waitBatter(/Kim/);
+  assert.match(await page.textContent('.last'), /Jones: Single \(CF\)/);
+  // Undo the outcome -> tree again for Jones; undo again -> the in-play pitch is gone
   await page.click('[data-act=undo]');
-  await waitBatter(/Jones/);
+  await waitBatter(/Jones/); await page.waitForSelector('.group-outcome');
+  await page.click('[data-act=undo]');
+  await page.waitForSelector('.group-pitchType');
   await pitch('FB','IN','IN_PLAY');
+  await page.click('[data-act=tree-cat][data-value=out]');
+  await page.click('[data-act=tree-result][data-value=FO]');
+  await page.click('[data-act=tree-fielder][data-value=""]'); // Skip
+  await page.waitForSelector('.group-pitchType'); await waitBatter(/Kim/);
+  await page.waitForFunction(() => document.querySelector('.stepper.outs span')?.textContent === 'OUTS2');
   await pitch('FB','OUT','TAKE');
   // Substitution: Kim -> Park, pitcher change
   await page.click('[data-act=lineup]');
-  await page.fill('dialog input[name=name3]', 'Park'); await page.fill('dialog input[name=num3]', '33');
-  await page.fill('dialog input[name=pitcher]', 'Reyes');
+  await page.fill('dialog input[name=t0_name3]', 'Park'); await page.fill('dialog input[name=t0_num3]', '33');
+  await page.fill('dialog input[name=t1_pitcher]', 'Reyes');
   await page.screenshot({ path: OUT + '/4-subs.png' });
   await page.click('dialog [data-act=save]');
   await waitBatter(/Park/);
@@ -77,6 +96,14 @@ const OUT = process.argv[2];
   assert.equal(rows.length, 12, 'unique rows');
   assert.equal(rows.filter(r => r.deleted).length, 1, 'one tombstone');
   const k = rows.find(r => r.pa_end === 'strikeout'); assert.equal(k.batter, 'Lopez'); assert.equal(k.strikes_before, 2);
+  assert.deepEqual([k.pa_result, k.batting_team, k.half, k.pitcher], ['K', 'Tigers', 'top', 'Garcia']);
+  const bips = rows.filter(r => r.action === 'IN_PLAY').sort((a, b) => a.pitch_number - b.pitch_number || (b.deleted - a.deleted));
+  assert.deepEqual(bips.map(r => [r.deleted, r.pa_result]), [[true, ''], [false, 'FO']]);
+  // Plate appearances: K, BB, the undone single (deleted) and the fly out
+  const pas = [...new Map(receivedPas.map(r => [r.id, r])).values()].sort((a, b) => a.recorded_at.localeCompare(b.recorded_at));
+  assert.deepEqual(pas.map(r => [r.batter, r.result, r.deleted, r.fielder]),
+    [['Lopez', 'K', false, ''], ['Smith', 'BB', false, ''], ['Jones', '1B', true, 'CF'], ['Jones', 'FO', false, '']]);
+  assert.equal(pas[3].batted_ball, 'fly'); assert.equal(pas[3].outs_before, 1); assert.equal(pas[0].pitches, 5);
   // Offline: record pitches, badge shows pending
   serverUp = false; await ctx.setOffline(true);
   await pitch('CB','IN','SWING');
@@ -94,12 +121,33 @@ const OUT = process.argv[2];
   // Back online -> pending pitch uploads
   serverUp = true; await ctx.setOffline(false);
   await page.waitForFunction(() => document.querySelector('.sync-badge')?.getAttribute('aria-label').includes('All synced'), null, { timeout: 8000 });
+  // Next batter asks why; out by rule is the third out -> the home team bats in the bottom of the 1st
+  await page.click('[data-act=next]');
+  await page.waitForSelector('text=Next batter: why?');
+  await page.screenshot({ path: OUT + '/5b-next-batter.png' });
+  await page.click('dialog [data-reason=OUT_RULE]');
+  await waitBatter(/▼1 Home/); await waitCount('0-0');
+  await page.waitForFunction(() => document.querySelector('.stepper.outs span')?.textContent === 'OUTS0');
+  await pitch('CB','OUT','TAKE');
+  await page.waitForFunction(() => document.querySelector('.sync-badge')?.getAttribute('aria-label').includes('All synced'), null, { timeout: 8000 });
+  const homeRow = received.at(-1);
+  assert.deepEqual([homeRow.half, homeRow.batting_team, homeRow.pitching_team, homeRow.batter, homeRow.inning], ['bottom', 'Home', 'Tigers', 'Batter 1', 1]);
+  assert.equal(receivedPas.at(-1).result, 'OUT_RULE');
+  // Manual out and half-inning controls
+  await page.click('[data-act=outs][data-delta="1"]');
+  await page.waitForFunction(() => document.querySelector('.stepper.outs span')?.textContent === 'OUTS1');
+  await page.click('[data-act=half][data-delta="1"]');
+  await waitBatter(/▲2 Tigers · Batting 5/); await waitBatter(/Diaz/);
+  await page.screenshot({ path: OUT + '/3b-top-2nd.png' });
   // iPad landscape screenshot
   const ipad = await browser.newContext({ ...devices['iPad Pro 11 landscape'] });
   const p2 = await ipad.newPage(); await p2.goto('http://localhost:8765/');
-  await p2.getByText('New game').click(); await p2.fill('input[name=name0]', 'Lopez'); await p2.getByText('Start game').click();
+  await p2.getByText('New game').click(); await p2.screenshot({ path: OUT + '/6a-ipad-setup.png' });
+  await p2.fill('input[name=t0_name0]', 'Lopez'); await p2.getByText('Start game').click();
   await p2.click('[data-act=pad][data-value=FB]');
   await p2.screenshot({ path: OUT + '/6-ipad.png' });
+  for (const v of ['IN', 'IN_PLAY']) await p2.click(`[data-act=pad][data-value=${v}]`);
+  await p2.screenshot({ path: OUT + '/6b-ipad-tree.png' });
   // ---- Setup link: open link in a fresh "phone" -> connected, rows carry token + recorded_by
   const shareLink = await (async () => {
     await page.click('[data-act=menu]'); await page.click('dialog [data-act=exit]').catch(() => {});
@@ -132,7 +180,7 @@ const OUT = process.argv[2];
   await phone2.route('https://script.google.com/**', async route => {
     const req = route.request();
     if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
   });
   const p3 = await phone2.newPage();
   p3.on('pageerror', e => errors.push(e.message));
@@ -144,7 +192,7 @@ const OUT = process.argv[2];
   await p3.waitForSelector('text=Connected to the sheet');
   assert.equal(await p3.locator('.connect-box').count(), 0, 'no paste box once connected');
   await p3.screenshot({ path: OUT + '/7-connected.png' });
-  await p3.getByText('New game').click(); await p3.fill('input[name=name0]', 'Lopez'); await p3.getByText('Start game').click();
+  await p3.getByText('New game').click(); await p3.fill('input[name=t0_name0]', 'Lopez'); await p3.getByText('Start game').click();
   for (const v of ['FB', 'IN', 'TAKE']) await p3.click(`[data-act=pad][data-value=${v}]`);
   for (let i = 0; i < 50 && !received.some(r => r.phone === 2); i++) await p3.waitForTimeout(100);
   const r2 = received.filter(r => r.phone === 2);
@@ -210,12 +258,12 @@ const OUT = process.argv[2];
   assert.equal(await ad.locator('[data-act=copy-link]').count(), 0, 'no clipboard step on Android');
   await ad.evaluate(() => { const e = new Event('beforeinstallprompt'); e.prompt = () => {}; e.userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
   await ad.click('[data-act=install]'); await ad.waitForSelector('text=Installing');
-  await ad.getByText('New game').click(); await ad.fill('input[name=name0]', 'A'); await ad.getByText('Start game').click();
+  await ad.getByText('New game').click(); await ad.fill('input[name=t0_name0]', 'A'); await ad.getByText('Start game').click();
   await ad.click('[data-act=lineup]'); await ad.goBack();
   await ad.waitForFunction(() => !document.querySelector('dialog[open]')); assert.equal(await ad.locator('.pads').count(), 3, 'Back closes the dialog only');
   await ad.goBack(); await ad.waitForSelector('text=New game');
   // Tracker badge is compact; tapping it opens the full status
-  await ad.getByText('New game').click(); await ad.fill('input[name=name0]', 'A'); await ad.getByText('Start game').click();
+  await ad.getByText('New game').click(); await ad.fill('input[name=t0_name0]', 'A'); await ad.getByText('Start game').click();
   assert.ok((await ad.textContent('.sync-badge')).length <= 9, 'compact badge');
   await ad.click('.sync-badge'); await ad.waitForSelector('text=Upload status');
   // ---- Declining a link: not connected, and not asked again at every launch

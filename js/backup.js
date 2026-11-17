@@ -1,7 +1,7 @@
 // Offline backups: export a game to a file through the iOS share sheet (save to
 // Files / iCloud Drive, AirDrop, email...) and import it again later.
 
-import { PITCH_COLUMNS, activeEvents } from './game.js';
+import { PITCH_COLUMNS, PA_COLUMNS, activeEvents } from './game.js';
 import * as db from './db.js';
 
 const FORMAT = 'pitchtracker-backup';
@@ -46,13 +46,24 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+function csv(columns, rows) {
+  return [columns.join(','), ...rows.map((r) => columns.map((c) => csvCell(r[c])).join(','))].join('\n');
+}
+
 export function toCSV(events) {
-  const rows = activeEvents(events).filter((e) => e.type === 'pitch').map((e) => e.row);
-  return [PITCH_COLUMNS.join(','), ...rows.map((r) => PITCH_COLUMNS.map((c) => csvCell(r[c])).join(','))].join('\n');
+  return csv(PITCH_COLUMNS, activeEvents(events).filter((e) => e.type === 'pitch').map((e) => e.row));
+}
+
+export function toPaCSV(events) {
+  return csv(PA_COLUMNS, activeEvents(events).filter((e) => e.paRow).map((e) => e.paRow));
 }
 
 export function exportCSV(game, events) {
   return shareFile(`pitches-${safeName(game.gameId)}-${stamp()}.csv`, toCSV(events), 'text/csv');
+}
+
+export function exportPaCSV(game, events) {
+  return shareFile(`plate-appearances-${safeName(game.gameId)}-${stamp()}.csv`, toPaCSV(events), 'text/csv');
 }
 
 // Merges a backup file into local storage. Existing events are kept as they are;

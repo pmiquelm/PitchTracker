@@ -62,6 +62,8 @@ export async function listGames() {
 
 // ---- events ----
 export const putEvent = (ev) => run('events', 'readwrite', (s) => s.put(ev));
+// Several events in one transaction: all of them are saved, or none.
+export const putEvents = (evs) => run('events', 'readwrite', (s) => { evs.forEach((e) => s.put(e)); });
 export const deleteEvent = (id) => run('events', 'readwrite', (s) => s.delete(id));
 export const getEvents = (gameKey) =>
   run('events', 'readonly', (s) => s.index('gameKey').getAll(gameKey));
@@ -94,7 +96,7 @@ export function addMissingEvents(events) {
       const req = s.get(e.id);
       req.onsuccess = () => {
         if (!req.result) {
-          s.put({ ...e, dirty: e.type === 'pitch' ? 1 : 0 });
+          s.put({ ...e, dirty: e.row || e.paRow ? 1 : 0 });
           added += 1;
         }
       };
