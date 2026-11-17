@@ -1,0 +1,83 @@
+# Deploys apps-script/Code.gs to the live Apps Script project whenever it changes
+# on main, as a new version of the EXISTING web app deployment (so the /exec
+# address and everyone's setup links stay the same).
+#
+# Setup and the reasons behind each choice: README.md, "Automatic script updates".
+#
+# Secrets live in the "apps-script" environment, which only the main branch can
+# use: a workflow edited on another branch can't read them, and pull requests
+# from forks never get them.
+
+name: Deploy Apps Script
+
+on:
+  push:
+    branches: [main]
+    paths: [apps-script/Code.gs]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-apps-script
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: apps-script
+    timeout-minutes: 10
+    env:
+      CLASP: npx --yes @google/clasp@3.4.1
+      SCRIPT_ID: ${{ secrets.APPS_SCRIPT_ID }}
+      DEPLOYMENT_ID: ${{ secrets.APPS_SCRIPT_DEPLOYMENT_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check secrets are set
+        run: |
+          for v in SCRIPT_ID DEPLOYMENT_ID; do
+            [ -n "${!v}" ] || { echo "::error::Secret for $v is missing in the apps-script environment"; exit 1; }
+          done
+          [ -n "$CLASPRC" ] || { echo "::error::Secret CLASPRC_JSON is missing in the apps-script environment"; exit 1; }
+        env:
+          CLASPRC: ${{ secrets.CLASPRC_JSON }}
+
+      - name: Syntax check
+        run: cp apps-script/Code.gs "$RUNNER_TEMP/Code.js" && node --check "$RUNNER_TEMP/Code.js"
+
+      - name: Sign in
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC" > ~/.clasprc.json
+        env:
+          CLASPRC: ${{ secrets.CLASPRC_JSON }}
+
+      - name: Fetch the live project
+        run: |
+          mkdir live && cd live
+          printf '{"scriptId":"%s","rootDir":".","scriptExtensions":[".gs"]}' "$SCRIPT_ID" > .clasp.json
+          $CLASP pull > /dev/null
+          # Only replace Code.gs when the project is exactly Code.gs + its manifest;
+          # anything else (a renamed or extra file) would end up with two copies
+          # of every function, so stop and let a person look.
+          files=$(find . -type f ! -name .clasp.json | sort | tr '\n' ' ')
+          if [ "$files" != "./Code.gs ./appsscript.json " ]; then
+            echo "::error::The live project has unexpected files ($files). Expected only Code.gs and appsscript.json."
+            exit 1
+          fi
+
+      - name: Push and redeploy
+        working-directory: live
+        run: |
+          cp ../apps-script/Code.gs Code.gs
+          $CLASP push --force > /dev/null
+          # Without a version number, clasp creates a new version and points the
+          # existing deployment at it. Output is hidden: it repeats the deployment ID.
+          $CLASP redeploy "$DEPLOYMENT_ID" --description "main ${GITHUB_SHA::7}" > /dev/null
+          echo "Deployed ${GITHUB_SHA::7} to the existing web app deployment."
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f ~/.clasprc.json

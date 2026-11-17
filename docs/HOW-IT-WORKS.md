@@ -572,7 +572,7 @@ Apps Script is JavaScript that runs **on Google's servers**, attached to a Googl
 | Execute as | **Me** | The script writes to *your* sheet with *your* permission. Recorders don't need Google accounts or access to the sheet |
 | Who has access | **Anyone** | Phones call it without signing in to Google. The token (7.4) is what keeps strangers out |
 
-Every **New deployment** creates a new address. To change the script but keep the address (so setup links keep working), use **Deploy → Manage deployments → Edit → Version: New version**.
+Every **New deployment** creates a new address. To change the script but keep the address (so setup links keep working), use **Deploy → Manage deployments → Edit → Version: New version**. The GitHub Action in 15.2 does the same thing automatically.
 
 ### 7.3 `setup`: run once by hand
 
@@ -913,7 +913,7 @@ The sheet holds player names and jersey numbers, plus the names recorders type. 
 4. GitHub Pages republishes `main` within a minute or two.
 5. Each phone picks up the new version the next time the app is opened with signal, and runs it from the launch after that (10.2).
 
-If `apps-script/Code.gs` changes, it must also be pasted into the Apps Script editor and deployed as a **new version of the existing deployment** (7.2), and run `setup` if headers changed.
+If `apps-script/Code.gs` changes, it must also reach Google as a **new version of the existing deployment** (7.2). With [automatic script updates](../README.md#automatic-script-updates-optional) set up, merging to `main` does that: a GitHub Action fetches the live project, replaces `Code.gs` and redeploys. Otherwise paste it into the Apps Script editor and deploy by hand. Either way, run `setup` by hand if the headers changed.
 
 ### 15.3 Rules for changing the code
 
