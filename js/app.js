@@ -57,9 +57,10 @@ function syncSummary(s = getSyncStatus()) {
       : { cls: 'muted', short: 'No sheet', text: 'No sheet connected' };
   }
   if (s.syncing) return { cls: 'busy', short: `↻ ${s.pending}`, text: `Uploading ${s.pending}…` };
-  if (s.pending) {
-    return { cls: 'warn', short: `⚠ ${s.pending}`, text: `${s.pending} not uploaded${s.error ? `: ${esc(s.error)}` : ''}` };
-  }
+  // Waiting a moment before the upload starts is normal, not a warning: only an
+  // upload that failed turns the badge yellow.
+  if (s.pending && !s.error) return { cls: 'busy', short: `↻ ${s.pending}`, text: `${s.pending} waiting to upload` };
+  if (s.pending) return { cls: 'warn', short: `⚠ ${s.pending}`, text: `${s.pending} not uploaded: ${esc(s.error)}` };
   return { cls: 'ok', short: '✓', text: 'All synced' };
 }
 
@@ -635,8 +636,11 @@ async function handleTrackerClick(e) {
     sel[group] = sel[group] === value ? null : value;
     if (sel.pitchType && sel.zone && sel.action) {
       const input = { ...sel };
+      // Show all three lit for a moment so the last tap is visibly confirmed. The
+      // pitch is saved during the flash, not after it.
+      renderTracker();
+      await Promise.all([recordPitch(input), new Promise((r) => setTimeout(r, 140))]);
       sel = { pitchType: null, zone: null, action: null };
-      await recordPitch(input);
     }
     renderTracker();
   } else if (act === 'tree-cat') {
@@ -838,7 +842,7 @@ function showLineupDialog() {
       <h2>Lineup &amp; substitutions</h2>
       <p class="muted small">${order.some((ti) => rosterOf(ti)?.length) ? 'Tap ⇄ on a spot, then a player from the bench, or edit a name.' : 'Edit a name to substitute that spot.'} The selected circle is the current batter.</p>
       ${sections}
-      <div class="row-buttons">
+      <div class="row-buttons sticky-actions">
         <button type="button" data-act="close">Cancel</button>
         <button type="button" class="primary" data-act="save">Save</button>
       </div>
