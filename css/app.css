@@ -168,6 +168,17 @@ label input { margin-top: 0.3rem; font-weight: 400; }
 .bench button { justify-content: flex-start; gap: 0.3rem; text-align: left; padding: 0.5rem 0.6rem; overflow: hidden; }
 .lineup-row { display: grid; grid-template-columns: 2.2rem 4.5rem 1fr; gap: 0.5rem; align-items: center; margin: 0.4rem 0; }
 .lineup-row .slot { font-weight: 700; text-align: center; color: var(--muted); }
+.lineup-row.with-sub { grid-template-columns: 2.2rem 3.2rem minmax(0, 1fr) 44px; gap: 0.4rem; }
+.lineup-row.with-sub .num { padding-left: 0.4rem; padding-right: 0.4rem; }
+.pitcher-row { margin: 0 0 0.4rem; }
+.pitcher-row.with-sub { display: grid; grid-template-columns: 1fr 44px; gap: 0.5rem; align-items: center; }
+.sub-btn { min-width: 44px; min-height: 44px; padding: 0; font-size: 1.1rem; }
+[data-row].targeted { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+[data-row].targeted .sub-btn { background: var(--accent); color: #fff; border-color: transparent; }
+.sub-bench { margin-bottom: 0.6rem; }
+.sub-bench h3.sub { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0.8rem 0 0.4rem; }
+.bench button.played { opacity: 0.65; }
+.bench button .note { margin-left: auto; padding-left: 0.3rem; font-size: 0.8rem; color: var(--muted); }
 .slot-radio { margin: 0; display: flex; align-items: center; gap: 0.2rem; }
 .slot-radio input { width: 1.2rem; height: 1.2rem; margin: 0; }
 fieldset.team { border: 1px solid var(--line); border-radius: var(--radius); padding: 0.4rem 0.8rem 0.6rem; margin: 1rem 0; min-width: 0; }
