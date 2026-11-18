@@ -137,7 +137,7 @@ game to the games list.
 ### 5. Team rosters (optional)
 
 The **Rosters** tab has 5 blocks side by side, one per team. In each block, type the team name next to **Team** and list
-the players below (**#**, **Name**, and optionally **Pos**), up to 40 per team. To add a sixth team, copy a whole block
+the players below (**#** and **Name**), up to 40 per team. To add a sixth team, copy a whole block
 to the right. Sheets set up before rosters existed get the tab the first time the app asks for rosters.
 
 On **New game**, the app downloads the rosters (and keeps a copy for when there's no signal; **↻ Rosters** fetches them

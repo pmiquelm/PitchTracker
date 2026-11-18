@@ -19,7 +19,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 4;
+const VERSION = 5;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -44,8 +44,8 @@ const PA_HEADERS = [
 const TEXT_COLUMNS = ['id', 'game_id', 'batter_number', 'recorded_by', 'batting_team', 'pitching_team',
   'result', 'fielder', 'pa_result'];
 
-// Rosters tab: blocks of 4 columns side by side, one per team, edited by hand.
-//   row 1: "Team" | <team name>      row 2: # | Name | Pos      rows 3+: players
+// Rosters tab: blocks of 3 columns side by side (#, Name, a gap), one per team, edited by hand.
+//   row 1: "Team" | <team name>      row 2: # | Name      rows 3+: players
 // The app downloads them to fill lineups. Any block whose first cell says "Team"
 // counts, so a sixth roster can be added by copying a block to the right.
 const ROSTER_SHEET_NAME = 'Rosters';
@@ -133,21 +133,32 @@ function sameHeaders(a, b) {
 }
 
 // Creates the Rosters template if the tab doesn't exist. Never touches an existing one.
+// The one exception: an empty template from version 4, which had a Pos column, is
+// replaced by the current one (nobody has typed anything into it yet).
 function ensureRosters(ss) {
   let sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
-  if (sheet) return sheet;
-  sheet = ss.insertSheet(ROSTER_SHEET_NAME);
-  if (sheet.getMaxColumns() < ROSTER_BLOCKS * 4) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), ROSTER_BLOCKS * 4 - sheet.getMaxColumns());
+  if (sheet && !isEmptyPosTemplate(sheet)) return sheet;
+  if (sheet) sheet.clear();
+  else sheet = ss.insertSheet(ROSTER_SHEET_NAME);
+  if (sheet.getMaxColumns() < ROSTER_BLOCKS * 3) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ROSTER_BLOCKS * 3 - sheet.getMaxColumns());
   }
   for (let b = 0; b < ROSTER_BLOCKS; b++) {
-    const col = 1 + b * 4;
+    const col = 1 + b * 3;
     // Numbers as text, so "07" stays "07".
     sheet.getRange(1, col, ROSTER_ROWS + 2, 1).setNumberFormat('@');
-    sheet.getRange(1, col, 2, 3).setValues([['Team', '', ''], ['#', 'Name', 'Pos']]).setFontWeight('bold');
+    sheet.getRange(1, col, 2, 2).setValues([['Team', ''], ['#', 'Name']]).setFontWeight('bold');
   }
   sheet.setFrozenRows(2);
   return sheet;
+}
+
+function isEmptyPosTemplate(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (!lastRow || !lastCol || lastRow > 2) return false;
+  const cells = [].concat.apply([], sheet.getRange(1, 1, lastRow, lastCol).getValues()).map(String);
+  return cells.indexOf('Pos') >= 0 && cells.every((v) => ['', 'Team', '#', 'Name', 'Pos'].indexOf(v) >= 0);
 }
 
 // Reads every roster block that has at least one player.
@@ -156,8 +167,8 @@ function readRosters(ss) {
   const lastRow = sheet.getLastRow();
   const lastCol = sheet.getLastColumn();
   if (lastRow < 3 || lastCol < 2) return [];
-  // Two extra columns so a block whose Pos column is empty still reads its Name.
-  const cells = sheet.getRange(1, 1, lastRow, Math.min(sheet.getMaxColumns(), lastCol + 2)).getValues();
+  // One extra column, so the last block's Name is read even if it's the sheet's last filled column.
+  const cells = sheet.getRange(1, 1, lastRow, Math.min(sheet.getMaxColumns(), lastCol + 1)).getValues();
   const text = (v) => String(v === null || v === undefined ? '' : v).trim();
   const rosters = [];
   for (let c = 0; c < lastCol; c++) {
@@ -165,7 +176,7 @@ function readRosters(ss) {
     const players = [];
     for (let r = 2; r < cells.length && players.length < ROSTER_MAX_PLAYERS; r++) {
       const name = text(cells[r][c + 1]);
-      if (name) players.push({ number: text(cells[r][c]), name: name, pos: text(cells[r][c + 2]) });
+      if (name) players.push({ number: text(cells[r][c]), name: name });
     }
     if (players.length) rosters.push({ name: text(cells[0][c + 1]) || 'Roster ' + (rosters.length + 1), players: players });
   }

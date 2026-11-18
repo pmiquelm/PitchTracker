@@ -10,8 +10,8 @@ test('normalizeRosters keeps clean strings and drops junk', () => {
     'nope',
     { players: [{ name: 'Ann' }] },
   ]), [
-    { name: 'Tigers', players: [{ number: '7', name: 'Lopez', pos: 'SS' }, { number: '', name: 'Kim', pos: '' }] },
-    { name: 'Roster 2', players: [{ number: '', name: 'Ann', pos: '' }] },
+    { name: 'Tigers', players: [{ number: '7', name: 'Lopez' }, { number: '', name: 'Kim' }] },
+    { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },
   ]);
   const long = normalizeRosters([{ name: 'x', players: Array.from({ length: 99 }, (_, i) => ({ name: 'P'.repeat(200) + i })) }]);
   assert.equal(long[0].players.length, 40);

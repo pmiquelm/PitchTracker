@@ -6,7 +6,7 @@ const MAX_ROSTERS = 20;
 const MAX_PLAYERS = 40;
 const clean = (v, max) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
-// Turns whatever the script sent into [{ name, players: [{ number, name, pos }] }].
+// Turns whatever the script sent into [{ name, players: [{ number, name }] }].
 export function normalizeRosters(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -15,7 +15,7 @@ export function normalizeRosters(raw) {
     const players = [];
     for (const p of r.players.slice(0, MAX_PLAYERS)) {
       const name = clean(p?.name, 60);
-      if (name) players.push({ number: clean(p.number, 4), name, pos: clean(p.pos, 12) });
+      if (name) players.push({ number: clean(p.number, 4), name });
     }
     if (players.length) out.push({ name: clean(r.name, 60) || `Roster ${out.length + 1}`, players });
   }

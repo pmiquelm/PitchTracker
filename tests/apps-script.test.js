@@ -68,9 +68,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 4);
+  assert.equal(api.doGet().version, 5);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 4, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 5, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -149,8 +149,8 @@ test('setup creates a Rosters template with 5 empty team blocks', () => {
   api.setup();
   const cells = api.ss.getSheetByName('Rosters').cells;
   for (let b = 0; b < 5; b++) {
-    assert.deepEqual(cells[0].slice(b * 4, b * 4 + 2), ['Team', ''], `block ${b + 1}`);
-    assert.deepEqual(cells[1].slice(b * 4, b * 4 + 3), ['#', 'Name', 'Pos']);
+    assert.deepEqual(cells[0].slice(b * 3, b * 3 + 2), ['Team', ''], `block ${b + 1}`);
+    assert.deepEqual(cells[1].slice(b * 3, b * 3 + 2), ['#', 'Name']);
   }
   assert.deepEqual(post(api, { action: 'rosters' }).rosters, [], 'empty blocks are not rosters');
 });
@@ -161,15 +161,15 @@ test('rosters action reads filled blocks, needs the token, and never rewrites th
   const sheet = api.ss.getSheetByName('Rosters');
   const set = (r, c, v) => sheet.getRange(r, c).setValue(v);
   set(1, 2, 'Tigers');
-  [['07', ' Lopez ', 'SS'], ['', '', ''], [12, 'Kim', '']].forEach((p, i) => p.forEach((v, j) => set(3 + i, 1 + j, v)));
-  set(3, 14, 'Ann'); // 4th block (columns M–O), no team name, no number
+  [['07', ' Lopez '], ['', ''], [12, 'Kim']].forEach((p, i) => p.forEach((v, j) => set(3 + i, 1 + j, v)));
+  set(3, 11, 'Ann'); // 4th block (columns J–K), no team name, no number
   const before = JSON.stringify(sheet.cells);
   const res = post(api, { action: 'rosters' });
   assert.equal(res.ok, true, res.error);
-  assert.equal(res.version, 4);
+  assert.equal(res.version, 5);
   assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
-    { name: 'Tigers', players: [{ number: '07', name: 'Lopez', pos: 'SS' }, { number: '12', name: 'Kim', pos: '' }] },
-    { name: 'Roster 2', players: [{ number: '', name: 'Ann', pos: '' }] },
+    { name: 'Tigers', players: [{ number: '07', name: 'Lopez' }, { number: '12', name: 'Kim' }] },
+    { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },
   ]);
   api.setup();
   assert.equal(JSON.stringify(sheet.cells), before, 'setup leaves an existing Rosters tab alone');
@@ -182,4 +182,27 @@ test('rosters action on a sheet set up before rosters creates the template', () 
   const res = post(api, { action: 'rosters' });
   assert.deepEqual([res.ok, res.rosters.length], [true, 0]);
   assert.ok(api.ss.getSheetByName('Rosters'));
+});
+
+const POS_TEMPLATE = () => [
+  ['Team', '', '', '', 'Team', '', '', ''],
+  ['#', 'Name', 'Pos', '', '#', 'Name', 'Pos', ''],
+];
+
+test('an empty Rosters template with a Pos column (version 4) is replaced', () => {
+  const api = load({ Rosters: POS_TEMPLATE() });
+  assert.equal(post(api, { action: 'rosters' }).ok, true);
+  const cells = api.ss.getSheetByName('Rosters').cells;
+  assert.deepEqual(Array.from(cells[1].slice(0, 6), (v) => v ?? ''), ['#', 'Name', '', '#', 'Name', '']);
+  assert.ok(!cells.flat().includes('Pos'));
+});
+
+test('a Pos-column Rosters tab with anything typed in is kept and still read', () => {
+  const cells = POS_TEMPLATE();
+  cells[0][1] = 'Tigers';
+  cells.push(['7', 'Lopez', 'SS']);
+  const api = load({ Rosters: cells.map((r) => r.slice()) });
+  const res = post(api, { action: 'rosters' });
+  assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [{ name: 'Tigers', players: [{ number: '7', name: 'Lopez' }] }]);
+  assert.deepEqual(api.ss.getSheetByName('Rosters').cells, cells, 'left as it was');
 });

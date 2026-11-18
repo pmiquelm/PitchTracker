@@ -151,7 +151,8 @@ label input { margin-top: 0.3rem; font-weight: 400; }
 .connect-box .big { margin: 0.4rem 0 0.2rem; }
 
 .roster-status { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0; }
-.roster-status span { flex: 1; }
+.roster-status > span { flex: 1; }
+.roster-error { color: var(--strike); }
 .roster-status button { flex: none; min-height: 40px; padding: 0.4rem 0.8rem; }
 .roster-choice .pick { width: 100%; margin-bottom: 0.2rem; }
 .picker h3.sub { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 1rem 0 0.4rem; }

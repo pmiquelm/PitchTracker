@@ -224,9 +224,9 @@ async function installApp() {
 }
 
 // ---------- rosters ----------
-const rosterOption = (p) => `<option value="${esc(p.name)}">${[p.number && `#${esc(p.number)}`, esc(p.pos)].filter(Boolean).join(' · ')}</option>`;
+const rosterOption = (p) => `<option value="${esc(p.name)}">${p.number ? `#${esc(p.number)}` : ''}</option>`;
 const rosterDatalist = (id, players) => (players?.length ? `<datalist id="${id}">${players.map(rosterOption).join('')}</datalist>` : '');
-const rosterPlayerLabel = (p) => `${p.number ? `<b>#${esc(p.number)}</b> ` : ''}${esc(p.name)}${p.pos ? ` <span class="muted">${esc(p.pos)}</span>` : ''}`;
+const rosterPlayerLabel = (p) => `${p.number ? `<b>#${esc(p.number)}</b> ` : ''}${esc(p.name)}`;
 
 // Lineup boxes (t<team>_num<i>, t<team>_name<i>, t<team>_pitcher): picking or typing a
 // roster name fixes its spelling and fills the number; a roster number fills the name,
@@ -289,7 +289,7 @@ function showRosterPicker(form, t, roster) {
       <label>Starting pitcher
         <select name="picker-pitcher">
           <option value="">${pitcherInput.value && !pitcher ? esc(pitcherInput.value) : '— none —'}</option>
-          ${players.map((p) => `<option value="${esc(p.name)}" ${p.name === pitcher ? 'selected' : ''}>${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}${p.pos ? ` (${esc(p.pos)})` : ''}</option>`).join('')}
+          ${players.map((p) => `<option value="${esc(p.name)}" ${p.name === pitcher ? 'selected' : ''}>${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}</option>`).join('')}
         </select></label>
       <div class="row-buttons">
         <button type="button" data-act="clear">Clear</button>
@@ -371,13 +371,19 @@ async function showSetup() {
 
   const form = document.getElementById('setup');
   const chosen = [null, null]; // roster picked for each team
+  let rosterError = connected ? null : '';
+  let loading = connected;
   const drawRosters = () => {
     const status = document.getElementById('roster-status');
     if (status) {
-      status.innerHTML = `<span class="muted small">${rosters.length
+      const saved = rosters.length
         ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} from the sheet${fetchedAt ? ` · ${new Date(fetchedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : ''}`
-        : 'No rosters yet. Fill in the <b>Rosters</b> tab of the sheet, then refresh.'}</span>
-        <button type="button" data-act="refresh-rosters">↻ Rosters</button>`;
+        : 'No rosters yet. Fill in the <b>Rosters</b> tab of the sheet, then refresh.';
+      // Say why a download failed: otherwise an old script or a bad connection looks like an empty tab.
+      status.innerHTML = `<span class="small ${rosterError ? 'roster-error' : 'muted'}">${loading ? 'Loading rosters…'
+        : rosterError ? `Rosters not loaded: ${esc(rosterError)}${rosters.length ? ` <span class="muted">(using the saved copy: ${saved})</span>` : ''}`
+        : saved}</span>
+        <button type="button" data-act="refresh-rosters" ${loading ? 'disabled' : ''}>↻ Rosters</button>`;
     }
     for (const t of [0, 1]) {
       // Keep the choice when the list is refreshed, if that roster is still there.
@@ -393,17 +399,19 @@ async function showSetup() {
     }
   };
   const refreshRosters = async (quiet) => {
+    loading = true;
+    drawRosters();
     try {
       ({ rosters, fetchedAt } = await fetchRosters());
+      rosterError = null;
       if (!quiet) toast(rosters.length ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} loaded` : 'The Rosters tab is empty');
     } catch (err) {
-      if (!quiet) toast(`Rosters not updated: ${esc(err.message)}`, 'error');
-      return;
+      rosterError = err.message;
     }
+    loading = false;
     if (document.body.contains(form)) drawRosters();
   };
-  drawRosters();
-  if (connected) refreshRosters(true); // the saved copy is shown meanwhile, and used offline
+  if (connected) refreshRosters(true); else drawRosters(); // the saved copy is shown meanwhile, and used offline
   wireRosterInputs(form, (t) => chosen[t]?.players);
   form.addEventListener('change', (e) => {
     const m = /^t(\d)_roster$/.exec(e.target.name || '');
