@@ -32,6 +32,8 @@ const OUT = process.argv[2];
   await page.waitForURL(/#c=/); await page.waitForSelector('text=New game');
   const safariUrl = page.url();
   await page.getByText('New game').click();
+  // An old sheet script can't send rosters: say so instead of looking like an empty Rosters tab
+  await page.waitForSelector('.roster-error'); assert.match(await page.textContent('#roster-status'), /out of date/);
   await page.fill('input[name=gameId]', '2026-11-16-HOME');
   await page.fill('input[name=t1_pitcher]', 'Garcia'); // the home pitcher faces the away lineup
   await page.fill('input[name=t0_team]', 'Tigers');
