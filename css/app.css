@@ -124,7 +124,11 @@ label input { margin-top: 0.3rem; font-weight: 400; }
   text-overflow: ellipsis;
   display: inline-block;
 }
-.sync-badge.compact { max-width: none; flex: none; padding: 0.3rem 0.7rem; font-size: 0.9rem; font-weight: 700; }
+.sync-badge.compact {
+  /* Fixed size so switching between ✓ / ↻ n / ⚠ n never shifts the count beside it. */
+  max-width: none; flex: none; min-width: 3.6rem; padding: 0.3rem 0.5rem; text-align: center;
+  font-size: 0.9rem; font-weight: 700;
+}
 .sync-line { font-size: 1.1rem; margin: 0.2rem 0 0.4rem; }
 .sync-badge.ok { background: #2a9d63; color: #fff; }
 .sync-badge.busy { background: #2c6fb8; color: #fff; }
