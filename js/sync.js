@@ -3,6 +3,7 @@
 // retries never create duplicates.
 
 import * as db from './db.js';
+import { normalizeRosters } from './roster.js';
 
 const BATCH_SIZE = 200;
 // Longer than the server's lock wait (Code.gs), so a busy sheet answers with a
@@ -11,6 +12,8 @@ const TIMEOUT_MS = 30000;
 // The sheet script must be at least this version (it reports it in every reply).
 // Older scripts don't know the PlateAppearances sheet or the new columns.
 export const SCRIPT_VERSION = 2;
+// Rosters need a newer script than uploads do. Uploads keep working with an older one.
+export const ROSTER_SCRIPT_VERSION = 4;
 const OUTDATED = 'The sheet script is out of date: deploy the new Code.gs (merge to main, or paste it and Deploy → Manage deployments → Edit → New version)';
 
 let status = { pending: 0, syncing: false, configured: false, error: null, lastSync: null };
@@ -52,7 +55,7 @@ export function describeError(err, online = globalThis.navigator?.onLine !== fal
   return err?.message || String(err);
 }
 
-async function post(url, payload) {
+async function post(url, payload, minVersion = SCRIPT_VERSION) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -62,7 +65,7 @@ async function post(url, payload) {
     if (!res.ok) throw new Error(`The sheet script answered HTTP ${res.status}`);
     const body = await res.json();
     if (!body.ok) throw new Error(body.error || 'Server error');
-    if (!(body.version >= SCRIPT_VERSION)) throw new Error(OUTDATED);
+    if (!(body.version >= minVersion)) throw new Error(OUTDATED);
     return body;
   } finally {
     clearTimeout(t);
@@ -105,6 +108,23 @@ export async function testConnection(url, token) {
   } catch (err) {
     throw new Error(describeError(err));
   }
+}
+
+// Downloads the sheet's Rosters tab and keeps a copy on this phone, so lineups can
+// be picked from it with no signal. Resolves with the rosters; throws a readable error.
+export async function fetchRosters() {
+  const { url, token } = await db.getSettings();
+  if (!url) throw new Error('Connect a sheet first');
+  let body;
+  try {
+    body = await post(url, { token, action: 'rosters' }, ROSTER_SCRIPT_VERSION);
+  } catch (err) {
+    // A script from before rosters reads this as an empty upload.
+    throw new Error(err?.message === 'No rows' ? OUTDATED : describeError(err));
+  }
+  const data = { rosters: normalizeRosters(body.rosters), fetchedAt: Date.now() };
+  await db.saveRosters(data);
+  return data;
 }
 
 export function initSync() {

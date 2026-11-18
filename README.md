@@ -52,7 +52,7 @@ After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
 2. Delete the sample code and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs). Save.
 3. Choose the **`setup`** function in the toolbar and click **Run**. Approve the permissions: it's your own script, so click
    *Advanced → Go to project* if Google warns you.
-   This creates the **Pitches**, **PlateAppearances** and **Summary** tabs. Open **Execution log** and copy the **TOKEN**.
+   This creates the **Pitches**, **PlateAppearances**, **Summary** and **Rosters** tabs. Open **Execution log** and copy the **TOKEN**.
 4. **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as*: **Me**, *Who has access*: **Anyone**. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 5. Open the app's URL in **Safari** → **Settings**, paste the URL and token, **Save**, then **Test connection**.
 
@@ -134,7 +134,22 @@ game to the games list.
 - The setup link and QR code contain the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
   after deleting the `TOKEN` script property (Project Settings → Script properties). That creates a new token; then share a new link.
 
-### 5. Dashboard
+### 5. Team rosters (optional)
+
+The **Rosters** tab has 5 blocks side by side, one per team. In each block, type the team name next to **Team** and list
+the players below (**#**, **Name**, and optionally **Pos**), up to 40 per team. To add a sixth team, copy a whole block
+to the right. Sheets set up before rosters existed get the tab the first time the app asks for rosters.
+
+On **New game**, the app downloads the rosters (and keeps a copy for when there's no signal; **↻ Rosters** fetches them
+again). Choose a team's roster and tap players into the batting order, pick the starting pitcher, then **Use lineup**.
+Names are then spelled exactly as in the sheet, so the Summary counts each player in one place. Typing still works:
+a roster name fixes its spelling and fills the number, and a roster number fills the name. During the game,
+**Lineup / Subs** suggests the same roster's bench players.
+
+A game keeps its own copy of the roster it started with, so editing the Rosters tab never changes games already recorded.
+Rosters need script version 4 or later. Uploading pitches works with older scripts too.
+
+### 6. Dashboard
 
 - The **Summary** tab has starter pivots: pitches by pitcher and type, batter action by pitch type, zone by pitch type,
   ball-in-play results by pitch type, results by batter and results against each pitcher.
@@ -202,6 +217,7 @@ node tests/e2e.cjs /tmp/shots   # browser test; needs Playwright and the server 
 | `js/sync.js` | upload queue to the Google Sheet |
 | `js/backup.js` | export/import of backup files and CSV |
 | `js/connect.js` | setup links (`#connect=…`) |
+| `js/roster.js` | cleaning up and matching roster players |
 | `js/app.js` | screens and UI |
 | `sw.js` | offline caching. **Bump `VERSION` whenever any app file changes**, or installed copies keep the old files |
 | `apps-script/Code.gs` | the Google Sheets receiver |

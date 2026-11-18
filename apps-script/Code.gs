@@ -4,7 +4,7 @@
  * Setup (once):
  *  1. In your Google Sheet: Extensions → Apps Script. Replace the code with this file.
  *  2. Select the `setup` function in the toolbar and click Run. Approve permissions.
- *     It creates the "Pitches", "PlateAppearances" and "Summary" sheets and logs a TOKEN (View → Logs).
+ *     It creates the "Pitches", "PlateAppearances", "Summary" and "Rosters" sheets and logs a TOKEN (View → Logs).
  *  3. Deploy → New deployment → type "Web app".
  *     Execute as: Me.  Who has access: Anyone.  → Deploy, copy the /exec URL.
  *  4. In the app: Settings → paste the URL and the token → Save → Test connection.
@@ -19,7 +19,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 3;
+const VERSION = 4;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -44,6 +44,15 @@ const PA_HEADERS = [
 const TEXT_COLUMNS = ['id', 'game_id', 'batter_number', 'recorded_by', 'batting_team', 'pitching_team',
   'result', 'fielder', 'pa_result'];
 
+// Rosters tab: blocks of 4 columns side by side, one per team, edited by hand.
+//   row 1: "Team" | <team name>      row 2: # | Name | Pos      rows 3+: players
+// The app downloads them to fill lineups. Any block whose first cell says "Team"
+// counts, so a sixth roster can be added by copying a block to the right.
+const ROSTER_SHEET_NAME = 'Rosters';
+const ROSTER_BLOCKS = 5;
+const ROSTER_ROWS = 30; // player rows in the template; reading goes to the last filled row
+const ROSTER_MAX_PLAYERS = 40;
+
 // Run once by hand in a new sheet: creates the tabs and the token.
 function setup() {
   updateLayout(SpreadsheetApp.getActiveSpreadsheet());
@@ -61,6 +70,7 @@ function setup() {
 function updateLayout(ss) {
   prepareSheet(ss, SHEET_NAME, HEADERS);
   prepareSheet(ss, PA_SHEET_NAME, PA_HEADERS);
+  ensureRosters(ss);
 
   let summary = ss.getSheetByName('Summary');
   if (!summary) summary = ss.insertSheet('Summary');
@@ -122,6 +132,46 @@ function sameHeaders(a, b) {
   return trimmed.length === b.length && b.every((h, i) => trimmed[i] === h);
 }
 
+// Creates the Rosters template if the tab doesn't exist. Never touches an existing one.
+function ensureRosters(ss) {
+  let sheet = ss.getSheetByName(ROSTER_SHEET_NAME);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(ROSTER_SHEET_NAME);
+  if (sheet.getMaxColumns() < ROSTER_BLOCKS * 4) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), ROSTER_BLOCKS * 4 - sheet.getMaxColumns());
+  }
+  for (let b = 0; b < ROSTER_BLOCKS; b++) {
+    const col = 1 + b * 4;
+    // Numbers as text, so "07" stays "07".
+    sheet.getRange(1, col, ROSTER_ROWS + 2, 1).setNumberFormat('@');
+    sheet.getRange(1, col, 2, 3).setValues([['Team', '', ''], ['#', 'Name', 'Pos']]).setFontWeight('bold');
+  }
+  sheet.setFrozenRows(2);
+  return sheet;
+}
+
+// Reads every roster block that has at least one player.
+function readRosters(ss) {
+  const sheet = ensureRosters(ss);
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 3 || lastCol < 2) return [];
+  // Two extra columns so a block whose Pos column is empty still reads its Name.
+  const cells = sheet.getRange(1, 1, lastRow, Math.min(sheet.getMaxColumns(), lastCol + 2)).getValues();
+  const text = (v) => String(v === null || v === undefined ? '' : v).trim();
+  const rosters = [];
+  for (let c = 0; c < lastCol; c++) {
+    if (text(cells[0][c]).toLowerCase() !== 'team') continue;
+    const players = [];
+    for (let r = 2; r < cells.length && players.length < ROSTER_MAX_PLAYERS; r++) {
+      const name = text(cells[r][c + 1]);
+      if (name) players.push({ number: text(cells[r][c]), name: name, pos: text(cells[r][c + 2]) });
+    }
+    if (players.length) rosters.push({ name: text(cells[0][c + 1]) || 'Roster ' + (rosters.length + 1), players: players });
+  }
+  return rosters;
+}
+
 function doGet() {
   return json({ ok: true, app: 'PitchTracker', version: VERSION });
 }
@@ -136,6 +186,9 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
     if (!token || body.token !== token) return json({ ok: false, error: 'Wrong token' });
+    if (body.action === 'rosters') {
+      return json({ ok: true, version: VERSION, rosters: readRosters(SpreadsheetApp.getActiveSpreadsheet()) });
+    }
     if (!Array.isArray(body.rows)) return json({ ok: false, error: 'No rows' });
     const pas = Array.isArray(body.pas) ? body.pas : [];
 
