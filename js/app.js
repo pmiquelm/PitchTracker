@@ -60,7 +60,7 @@ function syncSummary(s = getSyncStatus()) {
   if (s.pending) {
     return { cls: 'warn', short: `⚠ ${s.pending}`, text: `${s.pending} not uploaded${s.error ? `: ${esc(s.error)}` : ''}` };
   }
-  return { cls: 'ok', short: '✓ Synced', text: 'All synced' };
+  return { cls: 'ok', short: '✓', text: 'All synced' };
 }
 
 // The tracker uses the compact form so it never gets cut off; tap it for details.
