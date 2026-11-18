@@ -109,3 +109,9 @@ export async function getSettings() {
   return (await run('kv', 'readonly', (s) => s.get('settings'))) || { url: '', token: '', recorder: '' };
 }
 export const saveSettings = (settings) => run('kv', 'readwrite', (s) => s.put(settings, 'settings'));
+
+// ---- rosters (a copy of the sheet's Rosters tab) ----
+export async function getRosters() {
+  return (await run('kv', 'readonly', (s) => s.get('rosters'))) || { rosters: [], fetchedAt: null };
+}
+export const saveRosters = (data) => run('kv', 'readwrite', (s) => s.put(data, 'rosters'));

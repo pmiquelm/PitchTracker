@@ -78,7 +78,7 @@ button:disabled { opacity: 0.4; }
 button.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
 button.big { width: 100%; padding: 1rem; font-size: 1.15rem; }
 
-input {
+input, select {
   font: inherit;
   font-size: 17px; /* >=16px keeps iOS from zooming on focus */
   width: 100%;
@@ -89,6 +89,10 @@ input {
   color: var(--text);
 }
 label { display: block; margin: 0.8rem 0; font-weight: 600; }
+select { appearance: none; -webkit-appearance: none; min-height: 44px; padding-right: 2rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 1.1rem) 55%, calc(100% - 0.75rem) 55%; background-size: 0.35rem 0.35rem; background-repeat: no-repeat; }
+label select { margin-top: 0.3rem; font-weight: 400; }
 label input { margin-top: 0.3rem; font-weight: 400; }
 
 .muted { color: var(--muted); font-weight: 400; }
@@ -146,6 +150,21 @@ label input { margin-top: 0.3rem; font-weight: 400; }
 .steps li { margin: 0.35rem 0; }
 .connect-box .big { margin: 0.4rem 0 0.2rem; }
 
+.roster-status { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0; }
+.roster-status span { flex: 1; }
+.roster-status button { flex: none; min-height: 40px; padding: 0.4rem 0.8rem; }
+.roster-choice .pick { width: 100%; margin-bottom: 0.2rem; }
+.picker h3.sub { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 1rem 0 0.4rem; }
+.order { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }
+.order li { display: grid; grid-template-columns: 2rem 1fr auto; align-items: center; gap: 0.4rem;
+  min-height: 44px; padding: 0.15rem 0.3rem; border: 1px solid var(--line); border-radius: 10px; }
+.order li.empty { border-style: dashed; }
+.order .slot { font-weight: 700; text-align: center; color: var(--muted); }
+.order .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order .moves { display: flex; gap: 0.25rem; }
+.order .moves button { min-width: 40px; min-height: 40px; padding: 0; }
+.bench { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(8rem, 45%), 1fr)); gap: 0.4rem; }
+.bench button { justify-content: flex-start; gap: 0.3rem; text-align: left; padding: 0.5rem 0.6rem; overflow: hidden; }
 .lineup-row { display: grid; grid-template-columns: 2.2rem 4.5rem 1fr; gap: 0.5rem; align-items: center; margin: 0.4rem 0; }
 .lineup-row .slot { font-weight: 700; text-align: center; color: var(--muted); }
 .slot-radio { margin: 0; display: flex; align-items: center; gap: 0.2rem; }

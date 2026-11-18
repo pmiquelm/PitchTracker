@@ -68,9 +68,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 3);
+  assert.equal(api.doGet().version, 4);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 3, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 4, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -142,4 +142,44 @@ test('unknown columns: upload refused with the reason, sheet left as it was', ()
   assert.equal(res.ok, false);
   assert.match(res.error, /unknown columns my_notes/);
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells, cells);
+});
+
+test('setup creates a Rosters template with 5 empty team blocks', () => {
+  const api = load();
+  api.setup();
+  const cells = api.ss.getSheetByName('Rosters').cells;
+  for (let b = 0; b < 5; b++) {
+    assert.deepEqual(cells[0].slice(b * 4, b * 4 + 2), ['Team', ''], `block ${b + 1}`);
+    assert.deepEqual(cells[1].slice(b * 4, b * 4 + 3), ['#', 'Name', 'Pos']);
+  }
+  assert.deepEqual(post(api, { action: 'rosters' }).rosters, [], 'empty blocks are not rosters');
+});
+
+test('rosters action reads filled blocks, needs the token, and never rewrites the tab', () => {
+  const api = load();
+  api.setup();
+  const sheet = api.ss.getSheetByName('Rosters');
+  const set = (r, c, v) => sheet.getRange(r, c).setValue(v);
+  set(1, 2, 'Tigers');
+  [['07', ' Lopez ', 'SS'], ['', '', ''], [12, 'Kim', '']].forEach((p, i) => p.forEach((v, j) => set(3 + i, 1 + j, v)));
+  set(3, 14, 'Ann'); // 4th block (columns M–O), no team name, no number
+  const before = JSON.stringify(sheet.cells);
+  const res = post(api, { action: 'rosters' });
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.version, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
+    { name: 'Tigers', players: [{ number: '07', name: 'Lopez', pos: 'SS' }, { number: '12', name: 'Kim', pos: '' }] },
+    { name: 'Roster 2', players: [{ number: '', name: 'Ann', pos: '' }] },
+  ]);
+  api.setup();
+  assert.equal(JSON.stringify(sheet.cells), before, 'setup leaves an existing Rosters tab alone');
+  const denied = api.doPost({ postData: { contents: JSON.stringify({ token: 'no', action: 'rosters' }) } });
+  assert.deepEqual([denied.ok, denied.rosters], [false, undefined]);
+});
+
+test('rosters action on a sheet set up before rosters creates the template', () => {
+  const api = load({ Pitches: [OLD_HEADERS.slice()] });
+  const res = post(api, { action: 'rosters' });
+  assert.deepEqual([res.ok, res.rosters.length], [true, 0]);
+  assert.ok(api.ss.getSheetByName('Rosters'));
 });

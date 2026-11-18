@@ -18,6 +18,8 @@ const OUT = process.argv[2];
   await ctx.route('https://script.google.com/**', async route => {
     if (!serverUp) return route.abort('internetdisconnected');
     const req = route.request();
+    // A script from before rosters answers the roster request like an empty upload
+    if (req.method() === 'POST' && JSON.parse(req.postData()).action === 'rosters') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'No rows' }) });
     if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows); receivedPas.push(...b.pas); }
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
   });
@@ -37,6 +39,7 @@ const OUT = process.argv[2];
   for (let i = 0; i < 9; i++) { await page.fill(`input[name=t0_name${i}]`, names[i]); await page.fill(`input[name=t0_num${i}]`, String(10+i)); }
   await page.screenshot({ path: OUT + '/1-setup.png' });
   await page.getByText('Start game').click();
+  const waitFor = (pg, re) => pg.waitForFunction(src => new RegExp(src).test(document.querySelector('.batter-bar')?.textContent || ''), re.source, { timeout: 3000 });
   const pitch = async (t, z, a) => { for (const v of [t, z, a]) await page.click(`[data-act=pad][data-value=${v}]`); };
   const count = () => page.textContent('.count-num');
   const waitCount = (v) => page.waitForFunction(v => document.querySelector('.count-num')?.textContent === v, v, { timeout: 3000 }).catch(async () => { throw new Error('count ' + (await count()) + ' != ' + v); });
@@ -179,6 +182,8 @@ const OUT = process.argv[2];
   const phone2 = await browser.newContext({ ...devices['iPhone 14'] });
   await phone2.route('https://script.google.com/**', async route => {
     const req = route.request();
+    // A script from before rosters answers the roster request like an empty upload
+    if (req.method() === 'POST' && JSON.parse(req.postData()).action === 'rosters') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'No rows' }) });
     if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
   });
@@ -266,6 +271,60 @@ const OUT = process.argv[2];
   await ad.getByText('New game').click(); await ad.fill('input[name=t0_name0]', 'A'); await ad.getByText('Start game').click();
   assert.ok((await ad.textContent('.sync-badge')).length <= 9, 'compact badge');
   await ad.click('.sync-badge'); await ad.waitForSelector('text=Upload status');
+  // ---- Rosters: downloaded from the sheet, starting 9 picked by tapping, subs from the bench
+  const coach = await browser.newContext({ ...devices['iPhone 14'] });
+  const rosterPlayers = Array.from({ length: 14 }, (_, i) => ({ number: String(i + 1), name: `Player ${String.fromCharCode(65 + i)}`, pos: i === 13 ? 'P' : '' }));
+  let rosterCalls = 0; const coachRows = [];
+  await coach.route('https://script.google.com/**', async route => {
+    const b = route.request().method() === 'POST' ? JSON.parse(route.request().postData()) : {};
+    if (b.action === 'rosters') { rosterCalls++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 4, rosters: [{ name: 'Eagles', players: rosterPlayers }, { name: 'Hawks', players: [{ number: '9', name: 'Zed', pos: '' }] }] }) }); }
+    if (b.rows) coachRows.push(...b.rows);
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 3 }) });
+  });
+  const c = await coach.newPage();
+  c.on('pageerror', e => errors.push(e.message));
+  await c.goto(shareLink); await accept(c); await c.waitForSelector('text=New game');
+  await c.getByText('New game').click();
+  await c.waitForSelector('select[name=t1_roster]');
+  assert.match(await c.textContent('#roster-status'), /2 rosters from the sheet/);
+  await c.selectOption('select[name=t1_roster]', '0');
+  await c.waitForSelector('dialog .picker');
+  assert.equal(await c.locator('dialog .bench button').count(), 14);
+  for (const n of 'ABCDEFGHJ') await c.click(`dialog .bench button:has-text("Player ${n}")`);
+  await c.click('dialog .bench button:has-text("Player K")'); await c.waitForSelector('text=batting order is full');
+  await c.click('dialog [data-act=up][data-slot="1"]'); // B leads off, A bats 2nd
+  await c.click('dialog [data-act=remove][data-slot="8"]'); await c.click('dialog .bench button:has-text("Player K")');
+  await c.selectOption('dialog select[name=picker-pitcher]', 'Player N');
+  assert.match(await c.textContent('dialog'), /9\/9 picked/);
+  await c.screenshot({ path: OUT + '/14-roster-picker.png' });
+  await c.click('dialog [data-act=use]');
+  assert.equal(await c.inputValue('input[name=t1_team]'), 'Eagles', 'team named after its roster');
+  assert.deepEqual(await Promise.all([0, 1, 8].map(i => c.inputValue(`input[name=t1_name${i}]`))), ['Player B', 'Player A', 'Player K']);
+  assert.equal(await c.inputValue('input[name=t1_num8]'), '11');
+  assert.equal(await c.inputValue('input[name=t1_pitcher]'), 'Player N');
+  // Typing by hand: a roster name gets its spelling and number; a number fills an empty name
+  await c.fill('input[name=t1_name7]', 'player l'); await c.press('input[name=t1_name7]', 'Tab');
+  assert.deepEqual([await c.inputValue('input[name=t1_name7]'), await c.inputValue('input[name=t1_num7]')], ['Player L', '12']);
+  await c.fill('input[name=t1_name6]', ''); await c.fill('input[name=t1_num6]', '13'); await c.press('input[name=t1_num6]', 'Tab');
+  assert.equal(await c.inputValue('input[name=t1_name6]'), 'Player M');
+  await c.screenshot({ path: OUT + '/15-roster-setup.png', fullPage: true });
+  await c.fill('input[name=gameId]', 'ROSTER-1'); await c.getByText('Start game').click();
+  await waitFor(c, /Player N \(0\)/); // the home roster's pitcher faces the away batters
+  // Bottom of the 1st: the Eagles bat. Sub from the bench by name: the number comes along
+  await c.click('[data-act=half][data-delta="1"]'); await waitFor(c, /Player B/);
+  await c.click('[data-act=lineup]');
+  await c.fill('dialog input[name=t1_name0]', 'Player C'); await c.press('dialog input[name=t1_name0]', 'Tab');
+  assert.equal(await c.inputValue('dialog input[name=t1_num0]'), '3');
+  await c.screenshot({ path: OUT + '/16-roster-subs.png' });
+  await c.click('dialog [data-act=save]'); await waitFor(c, /#3 Player C/);
+  // Offline: the saved copy of the rosters is still there
+  await coach.setOffline(true);
+  await c.click('[data-act=menu]'); await c.click('dialog [data-act=exit]');
+  c.once('dialog', d => d.accept());
+  await c.getByText('New game').click(); await c.waitForSelector('select[name=t0_roster]');
+  await coach.setOffline(false);
+  assert.ok(rosterCalls >= 1);
+  await coach.close();
   // ---- Declining a link: not connected, and not asked again at every launch
   const wary = await browser.newContext({ ...devices['iPhone 14'] });
   const w = await wary.newPage(); await w.goto(shareLink);

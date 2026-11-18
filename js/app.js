@@ -2,9 +2,12 @@ import * as db from './db.js';
 import {
   PITCH_TYPES, ACTIONS, RESULT_LABELS, PA_END_LABELS, PA_RESULTS, OUTCOME_TREE, NEXT_BATTER_REASONS,
   replay, buildPitchRow, pitchPaRow, outcomePaRow, nextBatterPaRow, activeEvents,
-  battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel,
+  battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel, gameTeams,
 } from './game.js';
-import { initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection } from './sync.js';
+import {
+  initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection, fetchRosters,
+} from './sync.js';
+import { findByName, findByNumber } from './roster.js';
 import { backupJSON, exportCSV, exportPaCSV, importBackup } from './backup.js';
 import { buildSetupLink, decodeConnect, isSetupLinkHash, isValidScriptUrl, sheetCode } from './connect.js';
 import qrcodegen from './vendor/qrcodegen.js';
@@ -220,23 +223,132 @@ async function installApp() {
   if (!current) showHome();
 }
 
+// ---------- rosters ----------
+const rosterOption = (p) => `<option value="${esc(p.name)}">${[p.number && `#${esc(p.number)}`, esc(p.pos)].filter(Boolean).join(' · ')}</option>`;
+const rosterDatalist = (id, players) => (players?.length ? `<datalist id="${id}">${players.map(rosterOption).join('')}</datalist>` : '');
+const rosterPlayerLabel = (p) => `${p.number ? `<b>#${esc(p.number)}</b> ` : ''}${esc(p.name)}${p.pos ? ` <span class="muted">${esc(p.pos)}</span>` : ''}`;
+
+// Lineup boxes (t<team>_num<i>, t<team>_name<i>, t<team>_pitcher): picking or typing a
+// roster name fixes its spelling and fills the number; a roster number fills the name,
+// unless a different name was already typed there. `playersFor(team)` gives the roster.
+function wireRosterInputs(root, playersFor) {
+  root.addEventListener('change', (e) => {
+    const m = /^t(\d+)_(num|name|pitcher)(\d*)$/.exec(e.target.name || '');
+    if (!m) return;
+    const players = playersFor(Number(m[1]));
+    if (!players?.length) return;
+    const field = (kind) => root.querySelector(`[name="t${m[1]}_${kind}${m[3]}"]`);
+    if (m[2] === 'num') {
+      const p = findByNumber(players, e.target.value);
+      const name = field('name');
+      if (p && name && (!name.value.trim() || name.value === name.defaultValue)) name.value = p.name;
+      return;
+    }
+    const p = findByName(players, e.target.value);
+    if (!p) return;
+    e.target.value = p.name;
+    const num = m[2] === 'name' && field('num');
+    if (num) num.value = p.number;
+  });
+}
+
+// Tap players into the batting order; the result is written into the setup form.
+function showRosterPicker(form, t, roster) {
+  const players = roster.players;
+  const nameOf = (i) => form.querySelector(`[name="t${t}_name${i}"]`);
+  const numOf = (i) => form.querySelector(`[name="t${t}_num${i}"]`);
+  const pitcherInput = form.querySelector(`[name="t${t}_pitcher"]`);
+  // Start from what's in the form already, so reopening the picker keeps the order.
+  const order = Array.from({ length: LINEUP_SIZE }, (_, i) => {
+    const p = findByName(players, nameOf(i).value);
+    return p ? players.indexOf(p) : null;
+  }).map((v, i, a) => (v !== null && a.indexOf(v) === i ? v : null));
+  let pitcher = findByName(players, pitcherInput.value)?.name || '';
+
+  const render = () => {
+    const used = new Set(order.filter((v) => v !== null));
+    const filled = used.size;
+    return `
+      <h2>${esc(roster.name)} · starting ${LINEUP_SIZE}</h2>
+      <p class="muted small">Tap players in batting order. ${filled}/${LINEUP_SIZE} picked.</p>
+      <ol class="order">
+        ${order.map((v, i) => `<li class="${v === null ? 'empty' : ''}">
+          <span class="slot">${i + 1}</span>
+          <span class="who">${v === null ? '<span class="muted">tap a player below</span>' : rosterPlayerLabel(players[v])}</span>
+          ${v === null ? '' : `<span class="moves">
+            <button type="button" data-act="up" data-slot="${i}" aria-label="Move up" ${i ? '' : 'disabled'}>↑</button>
+            <button type="button" data-act="down" data-slot="${i}" aria-label="Move down" ${i < LINEUP_SIZE - 1 ? '' : 'disabled'}>↓</button>
+            <button type="button" data-act="remove" data-slot="${i}" aria-label="Remove">✕</button></span>`}
+        </li>`).join('')}
+      </ol>
+      <h3 class="sub">Bench <span class="muted">(${players.length - filled})</span></h3>
+      <div class="bench">
+        ${players.map((p, i) => (used.has(i) ? '' : `<button type="button" data-act="add" data-i="${i}">${rosterPlayerLabel(p)}</button>`)).join('')
+          || '<p class="muted small">Everyone is in the lineup.</p>'}
+      </div>
+      <label>Starting pitcher
+        <select name="picker-pitcher">
+          <option value="">${pitcherInput.value && !pitcher ? esc(pitcherInput.value) : '— none —'}</option>
+          ${players.map((p) => `<option value="${esc(p.name)}" ${p.name === pitcher ? 'selected' : ''}>${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}${p.pos ? ` (${esc(p.pos)})` : ''}</option>`).join('')}
+        </select></label>
+      <div class="row-buttons">
+        <button type="button" data-act="clear">Clear</button>
+        <button type="button" data-act="close">Cancel</button>
+        <button type="button" class="primary" data-act="use">Use lineup</button>
+      </div>`;
+  };
+  const dlg = openDialog('<div class="picker"></div>', (act, btn, d) => {
+    const slot = Number(btn.dataset.slot);
+    if (act === 'add') {
+      const free = order.indexOf(null);
+      if (free < 0) { toast(`The batting order is full. Remove someone first`); return; }
+      order[free] = Number(btn.dataset.i);
+    } else if (act === 'remove') {
+      order[slot] = null;
+    } else if (act === 'up' || act === 'down') {
+      const to = act === 'up' ? slot - 1 : slot + 1;
+      [order[slot], order[to]] = [order[to], order[slot]];
+    } else if (act === 'clear') {
+      order.fill(null);
+    } else if (act === 'use') {
+      order.forEach((v, i) => {
+        nameOf(i).value = v === null ? '' : players[v].name;
+        numOf(i).value = v === null ? '' : players[v].number;
+      });
+      // "— none —" keeps a pitcher typed by hand who isn't on the roster.
+      if (pitcher || findByName(players, pitcherInput.value)) pitcherInput.value = pitcher;
+      d.close();
+      return;
+    } else return;
+    draw();
+  });
+  const box = dlg.querySelector('.picker');
+  const draw = () => { const y = dlg.scrollTop; box.innerHTML = render(); dlg.scrollTop = y; };
+  dlg.addEventListener('change', (e) => { if (e.target.name === 'picker-pitcher') pitcher = e.target.value; });
+  draw();
+}
+
 // ---------- setup ----------
-function showSetup() {
+async function showSetup() {
   app.classList.remove('tracker-mode');
   const today = new Date().toISOString().slice(0, 10);
+  let { rosters, fetchedAt } = await db.getRosters();
+  const connected = !!settingsCache.url;
   // Team 0 is the away team (bats in the top of each inning), team 1 the home team.
   const teamForm = (t, title) => `
     <fieldset class="team">
       <legend>${title}</legend>
+      <div class="roster-choice" id="roster-choice-${t}"></div>
       <label>Team name<input name="t${t}_team" value="${t ? 'Home' : 'Away'}" autocapitalize="words"></label>
-      <label>Starting pitcher <span class="muted">(optional)</span><input name="t${t}_pitcher" autocapitalize="words"></label>
+      <label>Starting pitcher <span class="muted">(optional)</span><input name="t${t}_pitcher" autocapitalize="words" autocomplete="off" list="roster-list-${t}"></label>
       <h3>Batting order <span class="muted">(blank = Batter 1–9)</span></h3>
       ${Array.from({ length: LINEUP_SIZE }, (_, i) => `
         <div class="lineup-row">
           <span class="slot">${i + 1}</span>
           <input name="t${t}_num${i}" inputmode="numeric" placeholder="#" class="num" autocomplete="off">
-          <input name="t${t}_name${i}" placeholder="Batter ${i + 1}" autocomplete="off" autocapitalize="words">
+          <input name="t${t}_name${i}" placeholder="Batter ${i + 1}" autocomplete="off" autocapitalize="words" list="roster-list-${t}">
         </div>`).join('')}
+      <div id="roster-lists-${t}"></div>
     </fieldset>`;
 
   app.innerHTML = `
@@ -248,6 +360,7 @@ function showSetup() {
     <main class="page">
       <form id="setup" autocomplete="off">
         <label>Game ID<input name="gameId" required value="${today}-" autocapitalize="characters"></label>
+        ${connected ? '<div class="roster-status" id="roster-status"></div>' : ''}
         <div class="teams">
           ${teamForm(0, 'Away team <span class="muted">· bats first</span>')}
           ${teamForm(1, 'Home team')}
@@ -256,10 +369,66 @@ function showSetup() {
       </form>
     </main>`;
 
-  app.onclick = (e) => {
-    if (e.target.closest('[data-act="back"]')) showHome();
+  const form = document.getElementById('setup');
+  const chosen = [null, null]; // roster picked for each team
+  const drawRosters = () => {
+    const status = document.getElementById('roster-status');
+    if (status) {
+      status.innerHTML = `<span class="muted small">${rosters.length
+        ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} from the sheet${fetchedAt ? ` · ${new Date(fetchedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : ''}`
+        : 'No rosters yet. Fill in the <b>Rosters</b> tab of the sheet, then refresh.'}</span>
+        <button type="button" data-act="refresh-rosters">↻ Rosters</button>`;
+    }
+    for (const t of [0, 1]) {
+      // Keep the choice when the list is refreshed, if that roster is still there.
+      if (chosen[t]) chosen[t] = rosters.find((r) => r.name === chosen[t].name) || null;
+      document.getElementById(`roster-choice-${t}`).innerHTML = rosters.length ? `
+        <label>Roster
+          <select name="t${t}_roster">
+            <option value="">— type the lineup —</option>
+            ${rosters.map((r, i) => `<option value="${i}" ${r === chosen[t] ? 'selected' : ''}>${esc(r.name)} (${r.players.length})</option>`).join('')}
+          </select></label>
+        ${chosen[t] ? `<button type="button" class="primary pick" data-act="pick" data-team="${t}">Pick starting ${LINEUP_SIZE} from ${esc(chosen[t].name)}</button>` : ''}` : '';
+      document.getElementById(`roster-lists-${t}`).innerHTML = rosterDatalist(`roster-list-${t}`, chosen[t]?.players);
+    }
   };
-  document.getElementById('setup').onsubmit = async (e) => {
+  const refreshRosters = async (quiet) => {
+    try {
+      ({ rosters, fetchedAt } = await fetchRosters());
+      if (!quiet) toast(rosters.length ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} loaded` : 'The Rosters tab is empty');
+    } catch (err) {
+      if (!quiet) toast(`Rosters not updated: ${esc(err.message)}`, 'error');
+      return;
+    }
+    if (document.body.contains(form)) drawRosters();
+  };
+  drawRosters();
+  if (connected) refreshRosters(true); // the saved copy is shown meanwhile, and used offline
+  wireRosterInputs(form, (t) => chosen[t]?.players);
+  form.addEventListener('change', (e) => {
+    const m = /^t(\d)_roster$/.exec(e.target.name || '');
+    if (!m) return;
+    const t = Number(m[1]);
+    const before = chosen[t];
+    chosen[t] = rosters[e.target.value] || null;
+    // Name the team after its roster, unless a name was typed by hand.
+    const team = form.querySelector(`[name="t${t}_team"]`);
+    if (chosen[t] && [team.defaultValue, before?.name, ''].includes(team.value.trim())) team.value = chosen[t].name;
+    drawRosters();
+    if (chosen[t]) showRosterPicker(form, t, chosen[t]);
+  });
+
+  app.onclick = (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    if (btn.dataset.act === 'back') showHome();
+    else if (btn.dataset.act === 'refresh-rosters') refreshRosters(false);
+    else if (btn.dataset.act === 'pick') {
+      const t = Number(btn.dataset.team);
+      if (chosen[t]) showRosterPicker(form, t, chosen[t]);
+    }
+  };
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     const gameId = String(f.get('gameId')).trim();
@@ -276,6 +445,8 @@ function showSetup() {
         name: String(f.get(`t${t}_team`)).trim() || (t ? 'Home' : 'Away'),
         pitcher: String(f.get(`t${t}_pitcher`)).trim(),
         lineup,
+        // A copy of the roster, for substitutions later (works offline, unaffected by sheet edits).
+        ...(chosen[t] ? { roster: chosen[t] } : {}),
       };
     });
     if (!gameId) { toast('Enter a game ID', 'error'); return; }
@@ -614,19 +785,22 @@ function showLineupDialog() {
   const order = two ? [bi, 1 - bi] : [0];
   const sections = order.map((ti) => {
     const t = state.teams[ti];
+    const players = gameTeams(current.game)[ti]?.roster?.players;
+    const list = players?.length ? ` list="sub-list-${ti}" autocomplete="off"` : '';
     const rows = t.lineup.map((p, i) => `
       <div class="lineup-row">
         ${ti === bi
           ? `<label class="slot-radio"><input type="radio" name="current" value="${i}" ${i === t.slot ? 'checked' : ''}><span>${i + 1}</span></label>`
           : `<span class="slot">${i + 1}</span>`}
         <input name="t${ti}_num${i}" class="num" inputmode="numeric" value="${esc(p.number)}" placeholder="#">
-        <input name="t${ti}_name${i}" value="${esc(p.name)}" autocapitalize="words">
+        <input name="t${ti}_name${i}" value="${esc(p.name)}" autocapitalize="words"${list}>
       </div>`).join('');
     return `<fieldset class="team">
       ${two ? `<legend>${teamLabel(state, ti)} <span class="muted">· ${ti === bi ? 'batting' : 'in the field'}</span></legend>` : ''}
       ${rows}
       <label>${two ? `${teamLabel(state, ti)} pitcher${ti === fi ? ' <span class="muted">(pitching now)</span>' : ''}` : 'Pitcher'}
-        <input name="t${ti}_pitcher" value="${esc(t.pitcher)}" autocapitalize="words"></label>
+        <input name="t${ti}_pitcher" value="${esc(t.pitcher)}" autocapitalize="words"${list}></label>
+      ${rosterDatalist(`sub-list-${ti}`, players)}
     </fieldset>`;
   }).join('');
   const dlg = openDialog(`
@@ -662,6 +836,7 @@ function showLineupDialog() {
     renderTracker();
   });
   dlg.querySelector('form').onsubmit = (e) => e.preventDefault();
+  wireRosterInputs(dlg, (ti) => gameTeams(current.game)[ti]?.roster?.players);
 }
 
 function showLogDialog() {
