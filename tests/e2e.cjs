@@ -275,11 +275,11 @@ const OUT = process.argv[2];
   await ad.click('.sync-badge'); await ad.waitForSelector('text=Upload status');
   // ---- Rosters: downloaded from the sheet, starting 9 picked by tapping, subs from the bench
   const coach = await browser.newContext({ ...devices['iPhone 14'] });
-  const rosterPlayers = Array.from({ length: 14 }, (_, i) => ({ number: String(i + 1), name: `Player ${String.fromCharCode(65 + i)}`, pos: i === 13 ? 'P' : '' }));
+  const rosterPlayers = Array.from({ length: 14 }, (_, i) => ({ number: String(i + 1), name: `Player ${String.fromCharCode(65 + i)}` }));
   let rosterCalls = 0; const coachRows = [];
   await coach.route('https://script.google.com/**', async route => {
     const b = route.request().method() === 'POST' ? JSON.parse(route.request().postData()) : {};
-    if (b.action === 'rosters') { rosterCalls++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 4, rosters: [{ name: 'Eagles', players: rosterPlayers }, { name: 'Hawks', players: [{ number: '9', name: 'Zed', pos: '' }] }] }) }); }
+    if (b.action === 'rosters') { rosterCalls++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 4, rosters: [{ name: 'Eagles', players: rosterPlayers }, { name: 'Hawks', players: [{ number: '9', name: 'Zed' }] }] }) }); }
     if (b.rows) coachRows.push(...b.rows);
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 3 }) });
   });

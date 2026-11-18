@@ -224,9 +224,9 @@ async function installApp() {
 }
 
 // ---------- rosters ----------
-const rosterOption = (p) => `<option value="${esc(p.name)}">${[p.number && `#${esc(p.number)}`, esc(p.pos)].filter(Boolean).join(' · ')}</option>`;
+const rosterOption = (p) => `<option value="${esc(p.name)}">${p.number ? `#${esc(p.number)}` : ''}</option>`;
 const rosterDatalist = (id, players) => (players?.length ? `<datalist id="${id}">${players.map(rosterOption).join('')}</datalist>` : '');
-const rosterPlayerLabel = (p) => `${p.number ? `<b>#${esc(p.number)}</b> ` : ''}${esc(p.name)}${p.pos ? ` <span class="muted">${esc(p.pos)}</span>` : ''}`;
+const rosterPlayerLabel = (p) => `${p.number ? `<b>#${esc(p.number)}</b> ` : ''}${esc(p.name)}`;
 
 // Lineup boxes (t<team>_num<i>, t<team>_name<i>, t<team>_pitcher): picking or typing a
 // roster name fixes its spelling and fills the number; a roster number fills the name,
@@ -289,7 +289,7 @@ function showRosterPicker(form, t, roster) {
       <label>Starting pitcher
         <select name="picker-pitcher">
           <option value="">${pitcherInput.value && !pitcher ? esc(pitcherInput.value) : '— none —'}</option>
-          ${players.map((p) => `<option value="${esc(p.name)}" ${p.name === pitcher ? 'selected' : ''}>${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}${p.pos ? ` (${esc(p.pos)})` : ''}</option>`).join('')}
+          ${players.map((p) => `<option value="${esc(p.name)}" ${p.name === pitcher ? 'selected' : ''}>${p.number ? `#${esc(p.number)} ` : ''}${esc(p.name)}</option>`).join('')}
         </select></label>
       <div class="row-buttons">
         <button type="button" data-act="clear">Clear</button>
