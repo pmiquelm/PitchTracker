@@ -69,6 +69,8 @@ A GitHub Action ([`.github/workflows/deploy-apps-script.yml`](.github/workflows/
 setup links stay the same. From then on the repo is the source of truth: edits made in the Apps Script editor get
 overwritten on the next deploy.
 
+How the deploy works, what to change when you edit the script, and what to do when it fails: [section 16 of the guide](docs/HOW-IT-WORKS.md#16-editing-the-google-script-how-the-build-works).
+
 One-time setup:
 
 1. Turn on **Google Apps Script API** at <https://script.google.com/home/usersettings>.
