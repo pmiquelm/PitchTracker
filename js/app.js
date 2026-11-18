@@ -784,6 +784,20 @@ async function undo() {
   syncSoon();
 }
 
+// Who has already played for a team in this game (starters, subs and pitchers),
+// so the bench can mark players who were taken out.
+function playedFor(ti) {
+  const start = gameTeams(current.game)[ti];
+  const batted = new Set(start.lineup.map((p) => p.name));
+  const pitched = new Set(start.pitcher ? [start.pitcher] : []);
+  for (const e of activeEvents(current.events)) {
+    if ((e.data?.team ?? 0) !== ti) continue;
+    if (e.type === 'sub') batted.add(e.data.name);
+    else if (e.type === 'pitcher' && e.data.name) pitched.add(e.data.name);
+  }
+  return { batted, pitched };
+}
+
 function showLineupDialog() {
   const { state } = current;
   const bi = battingIndex(state);
@@ -791,36 +805,65 @@ function showLineupDialog() {
   const two = state.teams.length > 1;
   // Batting team first: that's where substitutions usually happen.
   const order = two ? [bi, 1 - bi] : [0];
+  const rosterOf = (ti) => gameTeams(current.game)[ti]?.roster?.players;
+  const subBtn = (ti, slot, what) => `<button type="button" class="sub-btn" data-act="sub-target" data-team="${ti}" data-slot="${slot}" aria-label="Sub ${what} from the bench">⇄</button>`;
   const sections = order.map((ti) => {
     const t = state.teams[ti];
-    const players = gameTeams(current.game)[ti]?.roster?.players;
-    const list = players?.length ? ` list="sub-list-${ti}" autocomplete="off"` : '';
+    const players = rosterOf(ti);
+    const has = !!players?.length;
+    const list = has ? ` list="sub-list-${ti}" autocomplete="off"` : '';
     const rows = t.lineup.map((p, i) => `
-      <div class="lineup-row">
+      <div class="lineup-row${has ? ' with-sub' : ''}" data-row="${ti}-${i}">
         ${ti === bi
           ? `<label class="slot-radio"><input type="radio" name="current" value="${i}" ${i === t.slot ? 'checked' : ''}><span>${i + 1}</span></label>`
           : `<span class="slot">${i + 1}</span>`}
         <input name="t${ti}_num${i}" class="num" inputmode="numeric" value="${esc(p.number)}" placeholder="#">
         <input name="t${ti}_name${i}" value="${esc(p.name)}" autocapitalize="words"${list}>
+        ${has ? subBtn(ti, i, `batter ${i + 1}`) : ''}
       </div>`).join('');
     return `<fieldset class="team">
       ${two ? `<legend>${teamLabel(state, ti)} <span class="muted">· ${ti === bi ? 'batting' : 'in the field'}</span></legend>` : ''}
       ${rows}
-      <label>${two ? `${teamLabel(state, ti)} pitcher${ti === fi ? ' <span class="muted">(pitching now)</span>' : ''}` : 'Pitcher'}
-        <input name="t${ti}_pitcher" value="${esc(t.pitcher)}" autocapitalize="words"${list}></label>
+      <label>${two ? `${teamLabel(state, ti)} pitcher${ti === fi ? ' <span class="muted">(pitching now)</span>' : ''}` : 'Pitcher'}</label>
+      <div class="pitcher-row${has ? ' with-sub' : ''}" data-row="${ti}-p">
+        <input name="t${ti}_pitcher" value="${esc(t.pitcher)}" autocapitalize="words" aria-label="Pitcher"${list}>
+        ${has ? subBtn(ti, 'p', 'the pitcher') : ''}
+      </div>
+      ${has ? `<div class="sub-bench" id="sub-bench-${ti}"></div>` : ''}
       ${rosterDatalist(`sub-list-${ti}`, players)}
     </fieldset>`;
   }).join('');
   const dlg = openDialog(`
     <form method="dialog" id="lineup-form">
       <h2>Lineup &amp; substitutions</h2>
-      <p class="muted small">Edit a name to substitute that spot. The selected circle is the current batter.</p>
+      <p class="muted small">${order.some((ti) => rosterOf(ti)?.length) ? 'Tap ⇄ on a spot, then a player from the bench, or edit a name.' : 'Edit a name to substitute that spot.'} The selected circle is the current batter.</p>
       ${sections}
       <div class="row-buttons">
         <button type="button" data-act="close">Cancel</button>
         <button type="button" class="primary" data-act="save">Save</button>
       </div>
     </form>`, async (act, btn, d) => {
+    if (act === 'sub-target') {
+      const t = { team: Number(btn.dataset.team), slot: btn.dataset.slot };
+      target = target && target.team === t.team && target.slot === t.slot ? null : t;
+      drawBenches();
+      if (target) d.querySelector(`#sub-bench-${target.team}`)?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (act === 'sub-in') {
+      const ti = Number(btn.dataset.team);
+      const p = rosterOf(ti)[Number(btn.dataset.i)];
+      if (!target || target.team !== ti) { toast('Tap ⇄ next to the spot to fill first'); return; }
+      if (!p) return;
+      if (target.slot === 'p') input(ti, 'pitcher').value = p.name;
+      else {
+        input(ti, `name${target.slot}`).value = p.name;
+        input(ti, `num${target.slot}`).value = p.number;
+      }
+      target = null;
+      drawBenches();
+      return;
+    }
     if (act !== 'save') return;
     const f = new FormData(d.querySelector('form'));
     let changes = 0;
@@ -843,8 +886,46 @@ function showLineupDialog() {
     if (changes) toast(`Saved ${changes} change${changes > 1 ? 's' : ''}`);
     renderTracker();
   });
+
+  // The bench: roster players not in the lineup as edited so far. Batting spots
+  // take anyone who isn't batting; the pitcher can be anyone but the current one.
+  let target = null; // { team, slot: index | 'p' } waiting for a player
+  const input = (ti, kind) => dlg.querySelector(`[name="t${ti}_${kind}"]`);
+  const played = Object.fromEntries(order.map((ti) => [ti, playedFor(ti)]));
+  const drawBenches = () => {
+    dlg.querySelectorAll('[data-row]').forEach((r) => r.classList.toggle('targeted', !!target && r.dataset.row === `${target.team}-${target.slot}`));
+    for (const ti of order) {
+      const box = dlg.querySelector(`#sub-bench-${ti}`);
+      if (!box) continue;
+      // Show the bench right under the spot being filled, or at the end of the team.
+      const row = target?.team === ti && dlg.querySelector(`[data-row="${ti}-${target.slot}"]`);
+      if (row) row.after(box); else box.closest('fieldset').querySelector(`#sub-list-${ti}`).before(box);
+      const players = rosterOf(ti);
+      const n = state.teams[ti].lineup.length;
+      const batting = new Set(Array.from({ length: n }, (_, i) => findByName(players, input(ti, `name${i}`).value)).filter(Boolean));
+      const pitcher = findByName(players, input(ti, 'pitcher').value);
+      const mine = target?.team === ti ? target : null;
+      const forPitcher = mine?.slot === 'p';
+      const out = forPitcher ? played[ti].pitched : played[ti].batted;
+      const options = players.map((p, i) => ({ p, i }))
+        .filter(({ p }) => (forPitcher ? p !== pitcher : !batting.has(p)))
+        .map((o) => ({ ...o, out: out.has(o.p.name) }))
+        .sort((a, b) => a.out - b.out); // fresh legs first
+      const heading = !mine ? `Bench <span class="muted">(${players.length - batting.size})</span>`
+        : forPitcher ? 'New pitcher: tap a player'
+        : `Sub in at ${Number(mine.slot) + 1}: tap a player`;
+      box.innerHTML = `<h3 class="sub">${heading}</h3>
+        <div class="bench">
+          ${options.map(({ p, i, out: o }) => `<button type="button" data-act="sub-in" data-team="${ti}" data-i="${i}"
+            class="${o ? 'played' : ''}"><span>${rosterPlayerLabel(p)}</span>${o ? `<span class="note">${forPitcher ? 'pitched' : 'out'}</span>` : ''}${forPitcher && batting.has(p) && !o ? '<span class="note">batting</span>' : ''}</button>`).join('')
+            || '<p class="muted small">Nobody left on the bench.</p>'}
+        </div>`;
+    }
+  };
   dlg.querySelector('form').onsubmit = (e) => e.preventDefault();
-  wireRosterInputs(dlg, (ti) => gameTeams(current.game)[ti]?.roster?.players);
+  wireRosterInputs(dlg, rosterOf);
+  dlg.addEventListener('change', drawBenches); // after the roster fix-ups above
+  drawBenches();
 }
 
 function showLogDialog() {

@@ -317,8 +317,25 @@ const OUT = process.argv[2];
   await c.click('[data-act=lineup]');
   await c.fill('dialog input[name=t1_name0]', 'Player C'); await c.press('dialog input[name=t1_name0]', 'Tab');
   assert.equal(await c.inputValue('dialog input[name=t1_num0]'), '3');
+  // Or tap ⇄ on a spot, then a bench player
+  assert.equal(await c.locator('#sub-bench-1 button:has-text("Player D")').count(), 0, 'batting players are not on the bench');
+  await c.click('#sub-bench-1 button:has-text("Player G")'); await c.waitForSelector('text=Tap ⇄ next to the spot');
+  await c.click('dialog [data-act=sub-target][data-team="1"][data-slot="3"]');
+  await c.waitForSelector('[data-row="1-3"].targeted'); assert.match(await c.textContent('#sub-bench-1'), /Sub in at 4/);
   await c.screenshot({ path: OUT + '/16-roster-subs.png' });
+  await c.click('#sub-bench-1 button:has-text("Player G")');
+  assert.deepEqual([await c.inputValue('dialog input[name=t1_name3]'), await c.inputValue('dialog input[name=t1_num3]')], ['Player G', '7']);
+  assert.equal(await c.locator('#sub-bench-1 button:has-text("Player G")').count(), 0, 'off the bench once in');
+  await c.click('dialog [data-act=sub-target][data-team="1"][data-slot="p"]');
+  await c.click('#sub-bench-1 button:has-text("Player H")');
+  assert.equal(await c.inputValue('dialog input[name=t1_pitcher]'), 'Player H');
   await c.click('dialog [data-act=save]'); await waitFor(c, /#3 Player C/);
+  // The players taken out are marked on the bench
+  await c.click('[data-act=lineup]'); await c.click('dialog [data-act=sub-target][data-team="1"][data-slot="3"]');
+  assert.match(await c.textContent('#sub-bench-1 button.played:has-text("Player D")'), /out/);
+  await c.click('dialog [data-act=sub-target][data-team="1"][data-slot="p"]');
+  assert.match(await c.textContent('#sub-bench-1 button.played:has-text("Player N")'), /pitched/);
+  await c.click('dialog [data-act=close]');
   // Offline: the saved copy of the rosters is still there
   await coach.setOffline(true);
   await c.click('[data-act=menu]'); await c.click('dialog [data-act=exit]');
