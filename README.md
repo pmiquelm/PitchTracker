@@ -154,7 +154,7 @@ Rosters need script version 4 or later. Uploading pitches works with older scrip
 ### 6. Live BP sessions
 
 **＋ Live BP** on the home screen tracks live batting practice: your own pitchers against your own hitters. Pick the
-team's roster and the pitcher, then **Start live BP**. There's no batting order, no innings and no outs: after every
+team's roster, tap the pitcher (or type a name), then **Start live BP**. There's no batting order, no innings and no outs: after every
 at-bat the pads make way for **Who's up?**, a grid of the roster (the pitcher left out, each player's plate appearances so far)
 with **Same batter again** at the top and a box for anyone not on the roster. Pitches, the count and the ball-in-play
 outcomes work as in a game.

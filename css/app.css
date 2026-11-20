@@ -378,3 +378,7 @@ dialog h2 { margin: 0 0 0.6rem; font-size: 1.2rem; }
 .bench.whoup button.last-up { border-color: var(--accent); }
 .whoup-other { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; }
 .whoup-other button { min-height: 44px; padding: 0.4rem 1.1rem; }
+.pitcher-pick { margin-bottom: 0.4rem; }
+.pitcher-pick button { min-height: 48px; }
+.pitcher-pick button.selected { background: var(--accent); color: #fff; border-color: transparent; }
+.pitcher-pick button.selected b { color: inherit; }

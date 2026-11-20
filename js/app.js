@@ -492,7 +492,9 @@ async function showBpSetup() {
           <legend>Team</legend>
           <div class="roster-choice" id="roster-choice-0"></div>
           <label>Team name<input name="t0_team" value="" autocapitalize="words" placeholder="Team"></label>
-          <label>Pitcher <span class="muted">(change any time)</span><input name="t0_pitcher" autocapitalize="words" autocomplete="off" list="roster-list-0"></label>
+          <h3>Pitcher <span class="muted">(change any time)</span></h3>
+          <div class="bench pitcher-pick" id="pitcher-pick"></div>
+          <label><span id="pitcher-label">Pitcher</span><input name="t0_pitcher" autocapitalize="words" autocomplete="off" list="roster-list-0"></label>
           <div id="roster-lists-0"></div>
         </fieldset>
         <button class="big primary" type="submit">Start live BP</button>
@@ -519,6 +521,17 @@ async function showBpSetup() {
           ${rosters.map((r, i) => `<option value="${i}" ${r === chosen ? 'selected' : ''}>${esc(r.name)} (${r.players.length})</option>`).join('')}
         </select></label>` : '';
     document.getElementById('roster-lists-0').innerHTML = rosterDatalist('roster-list-0', chosen?.players);
+    drawPitchers();
+  };
+  // With a roster, the pitcher is a tap on a player; typing stays for anyone else.
+  const drawPitchers = () => {
+    const box = document.getElementById('pitcher-pick');
+    const players = chosen?.players || [];
+    const cur = form.querySelector('[name="t0_pitcher"]').value.trim();
+    box.hidden = !players.length;
+    box.innerHTML = players.map((p, i) => `<button type="button" data-act="pick-pitcher" data-i="${i}"
+      class="${p.name === cur ? 'selected' : ''}" aria-pressed="${p.name === cur}">${rosterPlayerLabel(p)}</button>`).join('');
+    document.getElementById('pitcher-label').textContent = players.length ? 'Or type a name' : 'Pitcher';
   };
   const refresh = async (quiet) => {
     loading = true;
@@ -536,6 +549,7 @@ async function showBpSetup() {
   if (connected) refresh(true); else draw();
   wireRosterInputs(form, () => chosen?.players);
   form.addEventListener('change', (e) => {
+    if (e.target.name === 't0_pitcher') { drawPitchers(); return; }
     if (e.target.name !== 't0_roster') return;
     const before = chosen;
     chosen = rosters[e.target.value] || null;
@@ -548,6 +562,12 @@ async function showBpSetup() {
     if (!btn) return;
     if (btn.dataset.act === 'back') showHome();
     else if (btn.dataset.act === 'refresh-rosters') refresh(false);
+    else if (btn.dataset.act === 'pick-pitcher') {
+      const p = chosen?.players[Number(btn.dataset.i)];
+      const input = form.querySelector('[name="t0_pitcher"]');
+      if (p) input.value = input.value === p.name ? '' : p.name; // tap again to clear
+      drawPitchers();
+    }
   };
   form.onsubmit = async (e) => {
     e.preventDefault();
