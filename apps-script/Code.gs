@@ -19,7 +19,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 5;
+const VERSION = 6;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -28,7 +28,7 @@ const HEADERS = [
   'outs_before', 'pa_number', 'pitch_number', 'pitch_in_pa', 'lineup_slot',
   'batter_number', 'batter', 'pitcher', 'pitcher_pitch_count', 'balls_before',
   'strikes_before', 'pitch_type', 'zone', 'action', 'result', 'pa_end', 'pa_result',
-  'deleted', 'recorded_by', 'synced_at',
+  'deleted', 'recorded_by', 'session_type', 'synced_at',
 ];
 
 const PA_SHEET_NAME = 'PlateAppearances';
@@ -37,12 +37,16 @@ const PA_HEADERS = [
   'id', 'game_id', 'recorded_at', 'inning', 'half', 'batting_team', 'pitching_team',
   'outs_before', 'pa_number', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
   'pitches', 'balls', 'strikes', 'result', 'result_label', 'category', 'batted_ball',
-  'fielder', 'outs_on_play', 'deleted', 'recorded_by', 'synced_at',
+  'fielder', 'outs_on_play', 'deleted', 'recorded_by', 'session_type', 'synced_at',
 ];
+
+// session_type is "game" or "bp" (live batting practice). Rows from before it existed,
+// or sent by an older app, are games.
+const DEFAULTS = { session_type: 'game' };
 
 // Kept as text (stops "2026-05-01" turning into a date, or "1B" into something else).
 const TEXT_COLUMNS = ['id', 'game_id', 'batter_number', 'recorded_by', 'batting_team', 'pitching_team',
-  'result', 'fielder', 'pa_result'];
+  'result', 'fielder', 'pa_result', 'session_type'];
 
 // Rosters tab: blocks of 3 columns side by side (#, Name, a gap), one per team, edited by hand.
 //   row 1: "Team" | <team name>      row 2: # | Name      rows 3+: players
@@ -75,15 +79,23 @@ function updateLayout(ss) {
   let summary = ss.getSheetByName('Summary');
   if (!summary) summary = ss.insertSheet('Summary');
   summary.clear();
-  // Pitches column letters: O pitcher, S pitch_type, T zone, U action, X pa_result, Y deleted
-  // PlateAppearances letters: F batting_team, L batter, M pitcher, R result_label, S category, W deleted
+  // Pitches column letters: O pitcher, S pitch_type, T zone, U action, X pa_result, Y deleted, AA session_type
+  // PlateAppearances letters: F batting_team, L batter, M pitcher, R result_label, S category, W deleted, Y session_type
+  // Game tables leave out live BP; the BP tables show only it (IFERROR: empty until the first session).
+  const P = 'Pitches!A:AB';
+  const PA = 'PlateAppearances!A:Z';
+  const bp = (q) => '=IFERROR(' + q.slice(1) + ', "No live BP recorded yet")';
   const blocks = [
-    ['Pitches by pitcher and type', '=QUERY(Pitches!A:AA, "select O, count(A) where Y = false group by O pivot S", 1)'],
-    ['Batter action by pitch type', '=QUERY(Pitches!A:AA, "select S, count(A) where Y = false group by S pivot U", 1)'],
-    ['Zone by pitch type', '=QUERY(Pitches!A:AA, "select S, count(A) where Y = false group by S pivot T", 1)'],
-    ['Ball-in-play results by pitch type', '=QUERY(Pitches!A:AA, "select S, count(A) where Y = false and U = \'IN_PLAY\' group by S pivot X", 1)'],
-    ['Results by batter', '=QUERY(PlateAppearances!A:Y, "select F, L, count(A) where W = false group by F, L pivot R", 1)'],
-    ['Results against each pitcher', '=QUERY(PlateAppearances!A:Y, "select M, count(A) where W = false group by M pivot S", 1)'],
+    ['Pitches by pitcher and type', '=QUERY(' + P + ', "select O, count(A) where Y = false and AA <> \'bp\' group by O pivot S", 1)'],
+    ['Batter action by pitch type', '=QUERY(' + P + ', "select S, count(A) where Y = false and AA <> \'bp\' group by S pivot U", 1)'],
+    ['Zone by pitch type', '=QUERY(' + P + ', "select S, count(A) where Y = false and AA <> \'bp\' group by S pivot T", 1)'],
+    ['Ball-in-play results by pitch type', '=QUERY(' + P + ', "select S, count(A) where Y = false and AA <> \'bp\' and U = \'IN_PLAY\' group by S pivot X", 1)'],
+    ['Results by batter', '=QUERY(' + PA + ', "select F, L, count(A) where W = false and Y <> \'bp\' group by F, L pivot R", 1)'],
+    ['Results against each pitcher', '=QUERY(' + PA + ', "select M, count(A) where W = false and Y <> \'bp\' group by M pivot S", 1)'],
+    ['Live BP: pitches by pitcher and type', bp('=QUERY(' + P + ', "select O, count(A) where Y = false and AA = \'bp\' group by O pivot S", 1)')],
+    ['Live BP: batter action by pitch type', bp('=QUERY(' + P + ', "select S, count(A) where Y = false and AA = \'bp\' group by S pivot U", 1)')],
+    ['Live BP: results by batter', bp('=QUERY(' + PA + ', "select L, count(A) where W = false and Y = \'bp\' group by L pivot R", 1)')],
+    ['Live BP: batter vs pitcher (plate appearances)', bp('=QUERY(' + PA + ', "select M, count(A) where W = false and Y = \'bp\' group by M pivot L", 1)')],
   ];
   blocks.forEach(([title, formula], i) => {
     const row = 1 + i * 30;
@@ -109,7 +121,7 @@ function prepareSheet(ss, name, headers) {
       copy.setName(name + ' (before update ' + Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd HH-mm') + ')');
       const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
       const from = headers.map((h) => old.indexOf(h));
-      moved = data.map((r) => from.map((i) => (i < 0 ? '' : r[i])));
+      moved = data.map((r) => from.map((i, j) => (i < 0 ? (DEFAULTS[headers[j]] || '') : r[i])));
       sheet.clear();
     }
   }
@@ -257,7 +269,7 @@ function upsert(sheet, headers, input) {
       if (h === 'recorded_at') return r.recorded_at ? new Date(r.recorded_at) : '';
       if (h === 'deleted') return r.deleted === true;
       const v = r[h];
-      return v === undefined || v === null ? '' : v;
+      return v === undefined || v === null || v === '' ? (DEFAULTS[h] || '') : v;
     });
     const rowNum = existing.get(id);
     if (rowNum) sheet.getRange(rowNum, 1, 1, headers.length).setValues([values]);

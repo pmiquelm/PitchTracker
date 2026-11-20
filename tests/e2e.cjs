@@ -21,7 +21,7 @@ const OUT = process.argv[2];
     // A script from before rosters answers the roster request like an empty upload
     if (req.method() === 'POST' && JSON.parse(req.postData()).action === 'rosters') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'No rows' }) });
     if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows); receivedPas.push(...b.pas); }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 6 }) });
   });
   await page.goto('http://localhost:8765/');
   await page.locator('[data-act=settings]').click();
@@ -187,7 +187,7 @@ const OUT = process.argv[2];
     // A script from before rosters answers the roster request like an empty upload
     if (req.method() === 'POST' && JSON.parse(req.postData()).action === 'rosters') return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'No rows' }) });
     if (req.method() === 'POST') { const b = JSON.parse(req.postData()); assert.equal(b.token, 'secret-token-1'); received.push(...b.rows.map(r => ({ ...r, phone: 2 }))); }
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 2 }) });
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 6 }) });
   });
   const p3 = await phone2.newPage();
   p3.on('pageerror', e => errors.push(e.message));
@@ -281,7 +281,7 @@ const OUT = process.argv[2];
     const b = route.request().method() === 'POST' ? JSON.parse(route.request().postData()) : {};
     if (b.action === 'rosters') { rosterCalls++; return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 4, rosters: [{ name: 'Eagles', players: rosterPlayers }, { name: 'Hawks', players: [{ number: '9', name: 'Zed' }] }] }) }); }
     if (b.rows) coachRows.push(...b.rows);
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 3 }) });
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, version: 6 }) });
   });
   const c = await coach.newPage();
   c.on('pageerror', e => errors.push(e.message));
@@ -343,6 +343,54 @@ const OUT = process.argv[2];
   await c.getByText('New game').click(); await c.waitForSelector('select[name=t0_roster]');
   await coach.setOffline(false);
   assert.ok(rosterCalls >= 1);
+  // ---- Live BP: one team, batters picked after every at-bat, no innings or outs
+  await c.click('[data-act=back]'); await c.click('[data-act=new-bp]');
+  await c.waitForSelector('select[name=t0_roster]');
+  await c.selectOption('select[name=t0_roster]', '0');
+  assert.equal(await c.inputValue('input[name=t0_team]'), 'Eagles');
+  await c.fill('input[name=t0_pitcher]', 'player n'); await c.press('input[name=t0_pitcher]', 'Tab');
+  assert.equal(await c.inputValue('input[name=t0_pitcher]'), 'Player N');
+  await c.screenshot({ path: OUT + '/17-bp-setup.png' });
+  await c.click('#bp-setup [type=submit]');
+  await c.waitForSelector('.group-whoup');
+  assert.equal(await c.locator('.whoup button').count(), 13, 'the pitcher is not offered as a batter');
+  assert.equal(await c.locator('[data-act=pad]').count(), 0, 'no pitches until a batter is picked');
+  assert.equal(await c.locator('.stepper').count(), 0, 'no innings or outs');
+  await c.screenshot({ path: OUT + '/18-bp-whoup.png' });
+  const cp = async (t, z, a) => { for (const v of [t, z, a]) await c.click(`[data-act=pad][data-value=${v}]`); };
+  await c.click('.whoup button:has-text("Player C")'); await waitFor(c, /#3 Player C/);
+  await cp('FB', 'IN', 'TAKE'); await cp('CB', 'IN', 'SWING'); await cp('FB', 'IN', 'TAKE');
+  await c.waitForSelector('[data-act=bp-same]');
+  assert.match(await c.textContent('[data-act=bp-same]'), /Player C/);
+  assert.match(await c.textContent('.whoup button:has-text("Player C")'), /1 PA/);
+  // Someone not on the roster, typed by name; a roster number picks that player
+  await c.fill('#bp-name', '1'); await c.click('[data-act=bp-other]'); await waitFor(c, /#1 Player A/);
+  await cp('FB', 'IN', 'IN_PLAY'); await c.waitForSelector('.group-outcome');
+  await c.click('[data-act=tree-cat][data-value=out]'); await c.click('[data-act=tree-result][data-value=DP]'); await c.click('[data-act=tree-fielder][data-value=SS]');
+  await c.waitForSelector('.group-whoup');
+  await c.fill('#bp-name', 'Guest Kid'); await c.press('#bp-name', 'Enter'); await waitFor(c, /Guest Kid/);
+  await cp('FB', 'OUT', 'TAKE');
+  // Changing the batter mid at-bat, then undoing it, comes back to the same count
+  await c.click('[data-act=bp-batter]'); await c.waitForSelector('text=Change batter');
+  await c.click('.whoup button:has-text("Player B")'); await waitFor(c, /Player B/);
+  assert.equal(await c.textContent('.count-num'), '0-0');
+  await c.click('[data-act=undo]'); await waitFor(c, /Guest Kid/);
+  assert.equal(await c.textContent('.count-num'), '1-0');
+  await c.click('[data-act=next]'); await c.waitForSelector('dialog [data-reason=HBP]');
+  assert.equal(await c.locator('dialog [data-reason=OUT_RULE]').count(), 0, 'game-only reasons are hidden');
+  await c.click('dialog [data-reason=HBP]'); await c.waitForSelector('.group-whoup');
+  await c.click('[data-act=bp-pitcher]'); await c.click('dialog .bench button:has-text("Player H")');
+  await waitFor(c, /P: Player H \(0\)/);
+  await c.click('[data-act=bp-same]'); await waitFor(c, /Guest Kid/);
+  await c.screenshot({ path: OUT + '/19-bp-tracker.png' });
+  for (let i = 0; i < 50 && !coachRows.some(r => r.batter === 'Guest Kid'); i++) await c.waitForTimeout(100);
+  const bpRows = coachRows.filter(r => r.session_type === 'bp');
+  assert.ok(bpRows.length >= 5, 'BP pitches uploaded');
+  for (const r of bpRows) assert.deepEqual([r.batting_team, r.pitching_team, r.inning, r.outs_before, r.lineup_slot], ['Eagles', 'Eagles', '', '', '']);
+  assert.ok(coachRows.filter(r => r.game_id === 'ROSTER-1').every(r => r.session_type === 'game'));
+  await c.click('[data-act=log]'); assert.match(await c.textContent('dialog'), /P: Player N/); await c.click('dialog [data-act=close]');
+  await c.click('[data-act=menu]'); await c.click('dialog [data-act=exit]');
+  await c.waitForSelector('.tag:has-text("Live BP")');
   await coach.close();
   // ---- Declining a link: not connected, and not asked again at every launch
   const wary = await browser.newContext({ ...devices['iPhone 14'] });

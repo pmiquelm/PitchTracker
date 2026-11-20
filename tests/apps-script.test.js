@@ -68,9 +68,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 5);
+  assert.equal(api.doGet().version, 6);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 5, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 6, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -95,9 +95,31 @@ test('setup (by hand) moves an old Pitches sheet to the new columns and keeps a 
   assert.deepEqual(copy.cells, [OLD, row]);
   // Running setup again changes nothing and makes no second copy
   api.setup();
-  assert.deepEqual(sheet.cells[1], api.HEADERS.map((h) => (OLD.includes(h) ? `v-${h}` : '')));
+  assert.deepEqual(sheet.cells[1], api.HEADERS.map((h) => (OLD.includes(h) ? `v-${h}` : h === 'session_type' ? 'game' : '')));
   assert.equal(api.ss.sheets.filter((s) => s.name.startsWith('Pitches (before')).length, 1);
   assert.equal(post(api, { rows: [{ id: 'y' }], pas: [] }).ok, true);
+});
+
+test('live BP rows keep session_type; rows without one are games', () => {
+  const api = load();
+  api.setup();
+  post(api, {
+    rows: [{ id: 'bp1', session_type: 'bp' }, { id: 'g1', session_type: 'game' }, { id: 'old' }],
+    pas: [{ id: 'bp1', session_type: 'bp' }, { id: 'old-pa' }],
+  });
+  const col = (name, headers) => api.ss.getSheetByName(name).cells.slice(1).map((r) => r[headers.indexOf('session_type')]);
+  assert.deepEqual(col('Pitches', api.HEADERS), ['bp', 'game', 'game']);
+  assert.deepEqual(col('PlateAppearances', api.PA_HEADERS), ['bp', 'game']);
+  // Summary letters point at session_type, and game tables leave BP out
+  const letter = (i) => (i >= 26 ? 'A' : '') + String.fromCharCode(65 + (i % 26));
+  assert.equal(letter(api.HEADERS.indexOf('session_type')), 'AA');
+  assert.equal(letter(api.PA_HEADERS.indexOf('session_type')), 'Y');
+  assert.equal(letter(api.HEADERS.indexOf('deleted')), 'Y');
+  assert.equal(letter(api.PA_HEADERS.indexOf('deleted')), 'W');
+  const formulas = api.ss.getSheetByName('Summary').cells.map((r) => String(r[0] ?? '')).filter((f) => f.includes('QUERY'));
+  assert.equal(formulas.length, 10);
+  for (const f of formulas.slice(0, 6)) assert.match(f, /(AA|Y) <> 'bp'/);
+  for (const f of formulas.slice(6)) assert.match(f, /^=IFERROR\(QUERY\(.*(AA|Y) = 'bp'/);
 });
 
 test('wrong token is refused', () => {
@@ -123,7 +145,7 @@ test('after a deploy that changed the columns, the first upload updates the layo
   assert.equal(sheet.cells[2][api.HEADERS.indexOf('half')], 'top', 'the upload itself landed in the new layout');
   assert.equal(api.ss.getSheetByName('PlateAppearances').cells[1][api.PA_HEADERS.indexOf('result')], '1B');
   assert.deepEqual(api.ss.sheets.find((s) => s.name.startsWith('Pitches (before update')).cells, [OLD_HEADERS, row]);
-  assert.match(String(api.ss.getSheetByName('Summary').cells[1][0]), /QUERY\(Pitches!A:AA/, 'Summary rebuilt');
+  assert.match(String(api.ss.getSheetByName('Summary').cells[1][0]), /QUERY\(Pitches!A:AB/, 'Summary rebuilt');
   // Later uploads don't touch the layout again
   assert.equal(post(api, { rows: [{ id: 'later' }], pas: [] }).ok, true);
   assert.equal(api.ss.sheets.filter((s) => s.name.startsWith('Pitches (before')).length, 1);
@@ -166,7 +188,7 @@ test('rosters action reads filled blocks, needs the token, and never rewrites th
   const before = JSON.stringify(sheet.cells);
   const res = post(api, { action: 'rosters' });
   assert.equal(res.ok, true, res.error);
-  assert.equal(res.version, 5);
+  assert.equal(res.version, 6);
   assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
     { name: 'Tigers', players: [{ number: '07', name: 'Lopez' }, { number: '12', name: 'Kim' }] },
     { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },

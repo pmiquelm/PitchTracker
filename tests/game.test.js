@@ -204,3 +204,55 @@ test('sheet columns match the Apps Script headers', () => {
   assert.deepEqual(list('HEADERS'), [...PITCH_COLUMNS, 'synced_at']);
   assert.deepEqual(list('PA_HEADERS'), [...PA_COLUMNS, 'synced_at']);
 });
+
+// ---- Live BP ----
+const bpGame = { key: 'bp1', gameId: '2026-11-20-BP', mode: 'bp', teams: [{ name: 'Tigers', lineup: [], pitcher: 'Ace' }] };
+const up = (name, number = '') => ev('batterUp', { name, number });
+
+test('BP: starts waiting for a batter, then the picked batter is up', () => {
+  const s0 = replay(bpGame, []);
+  assert.deepEqual([s0.bp, s0.awaitingBatter, currentBatter(s0).name], [true, true, '']);
+  const s1 = replay(bpGame, [up('Lopez', '7')]);
+  assert.deepEqual([s1.awaitingBatter, currentBatter(s1).name, currentBatter(s1).number, s1.paNumber], [false, 'Lopez', '7', 1]);
+});
+
+test('BP: every at-bat ends by asking again; the last batter stays for "same batter"', () => {
+  const s = replay(bpGame, [up('Lopez'), ...k()]);
+  assert.deepEqual([s.awaitingBatter, currentBatter(s).name, s.paNumber, s.outs, s.balls, s.strikes], [true, 'Lopez', 2, 0, 0, 0]);
+  const walk = replay(bpGame, [up('Lopez'), ...k(), up('Lopez'), ...Array.from({ length: 4 }, () => p('FB', 'OUT', 'TAKE'))]);
+  assert.deepEqual([walk.awaitingBatter, walk.paNumber], [true, 3]);
+  const inp = replay(bpGame, [up('Kim'), inPlay()]);
+  assert.equal(inp.awaitingBatter, false, 'still up until the outcome is chosen');
+  const after = replay(bpGame, [up('Kim'), inPlay(), outcome('out', 'DP')]);
+  assert.deepEqual([after.awaitingBatter, after.outs, after.inning, after.paNumber], [true, 0, 1, 2]);
+  const hbp = replay(bpGame, [up('Kim'), ev('nextBatter', { reason: 'HBP' })]);
+  assert.deepEqual([hbp.awaitingBatter, hbp.paNumber], [true, 2]);
+});
+
+test('BP: no innings or outs, and picking a batter mid at-bat starts a new one', () => {
+  const s = replay(bpGame, [up('Kim'), ...k(), up('Ruiz'), ...k(), up('Diaz'), ...k(), ev('half', { delta: 1 }), ev('outs', { delta: 1 })]);
+  assert.deepEqual([s.outs, s.inning, s.half, s.paNumber], [0, 1, 'top', 4]);
+  const mid = replay(bpGame, [up('Kim'), p('FB', 'OUT', 'TAKE'), up('Ruiz')]);
+  assert.deepEqual([mid.balls, mid.paNumber, currentBatter(mid).name], [0, 2, 'Ruiz']);
+  const undone = replay(bpGame, [up('Kim'), ...k(), { ...up('Ruiz'), deleted: 1 }]);
+  assert.equal(undone.awaitingBatter, true, 'undoing a pick asks again');
+});
+
+test('BP: pitcher changes keep their own count', () => {
+  const s = replay(bpGame, [up('Kim'), ...k(), ev('pitcher', { name: 'Bo' }), up('Kim'), p('FB', 'IN', 'TAKE')]);
+  assert.deepEqual([s.teams[0].pitcher, s.teams[0].pitcherPitches, s.pitchNumber], ['Bo', 1, 4]);
+});
+
+test('BP rows: same team on both sides, no inning/outs/slot, session_type bp', () => {
+  const s = replay(bpGame, [up('Lopez', '7'), p('FB', 'OUT', 'TAKE')]);
+  const row = buildPitchRow(bpGame, s, { pitchType: 'CB', zone: 'IN', action: 'SWING' }, { id: 'x', createdAt: 0 });
+  assert.deepEqual(
+    [row.session_type, row.batting_team, row.pitching_team, row.inning, row.half, row.outs_before, row.lineup_slot, row.batter, row.batter_number, row.pitcher, row.balls_before, row.pitch_in_pa],
+    ['bp', 'Tigers', 'Tigers', '', '', '', '', 'Lopez', '7', 'Ace', 1, 2]);
+  assert.deepEqual(Object.keys(row).sort(), PITCH_COLUMNS.filter((c) => c !== 'recorded_by').sort());
+  const pa = nextBatterPaRow(bpGame, s, 'HBP', { id: 'n', createdAt: 0 });
+  assert.deepEqual([pa.session_type, pa.batter, pa.outs_on_play], ['bp', 'Lopez', 0]);
+  assert.deepEqual(Object.keys(pa).sort(), PA_COLUMNS.filter((c) => c !== 'recorded_by').sort());
+  const g = buildPitchRow(game, replay(game, []), { pitchType: 'FB', zone: 'IN', action: 'TAKE' }, { id: 'y', createdAt: 0 });
+  assert.equal(g.session_type, 'game');
+});
