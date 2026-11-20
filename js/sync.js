@@ -10,8 +10,8 @@ const BATCH_SIZE = 200;
 // clear error instead of the request being cut off.
 const TIMEOUT_MS = 30000;
 // The sheet script must be at least this version (it reports it in every reply).
-// Older scripts don't know the PlateAppearances sheet or the new columns.
-export const SCRIPT_VERSION = 2;
+// Older scripts lack the session_type column, so live BP rows would be counted as games.
+export const SCRIPT_VERSION = 6;
 // Rosters need a newer script than uploads do. Uploads keep working with an older one.
 export const ROSTER_SCRIPT_VERSION = 4;
 const OUTDATED = 'The sheet script is out of date: deploy the new Code.gs (merge to main, or paste it and Deploy → Manage deployments → Edit → New version)';

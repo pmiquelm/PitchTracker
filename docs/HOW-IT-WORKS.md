@@ -285,6 +285,19 @@ Typing nine names twice a game is slow, and a name spelled two ways ("J. Lopez",
 
 Rosters need script version 4 or later. With an older script, uploads still work; only the roster download says the script is out of date (7.5, *Versions*).
 
+#### 3.2.2 Live BP sessions
+
+**＋ Live BP** opens [`showBpSetup`](../js/app.js): a session ID (`<date>-BP`), the roster of the team, its name and the pitcher. The game record has `"mode": "bp"` and a single team with an empty lineup:
+
+```json
+{ "key": "…", "gameId": "2026-11-20-BP", "mode": "bp",
+  "teams": [{ "name": "Eagles", "pitcher": "Ortega", "lineup": [], "roster": { … } }] }
+```
+
+In the rules ([`initialState`](../js/game.js), [`reduce`](../js/game.js)) a BP state has `bp: true`, the batter at the plate in `batter`, and `awaitingBatter`. Every way an at-bat ends (strikeout, walk, an outcome, **End AB** with a reason) adds one to `paNumber` and sets `awaitingBatter`, instead of moving to the next lineup slot. A new event, `batterUp {name, number}`, puts a batter at the plate; picked in the middle of an at-bat (**Batter**), it leaves that at-bat unfinished, like `setBatter` in a game. Outs and half-innings do nothing in BP. Undoing a `batterUp` brings **Who's up?** back.
+
+The tracker draws a BP game with [`renderBpTracker`](../js/app.js): no outs dots or inning/outs steppers; the pads are replaced by **Who's up?** ([`whoUpHTML`](../js/app.js)) whenever a batter is owed; the footer is Undo / End AB / Batter / Pitcher / Log. Rows get `session_type = "bp"`, the team on both sides, and empty `inning`, `half`, `outs_before` and `lineup_slot` ([`situation`](../js/game.js)). Game rows get `session_type = "game"`.
+
 ### 3.3 The tracker screen: `showTracker` and `renderTracker`
 
 [`showTracker`](../js/app.js#L468) loads the game and **all of its events** from IndexedDB, then runs `replay` (2.12) to compute the current state: count, batter, inning, pitch counts. [`renderTracker`](../js/app.js#L574) then draws the whole screen from that state: the count and dots, the batter bar, the three groups of pads, and the bottom buttons.
@@ -628,7 +641,7 @@ Every **New deployment** creates a new address. To change the script but keep th
 [`setup`](../apps-script/Code.gs#L57) runs [`updateLayout`](../apps-script/Code.gs#L70) and creates the token:
 
 1. Creates the **Pitches** and **PlateAppearances** tabs ([`prepareSheet`](../apps-script/Code.gs#L97)) with the header row, bold and frozen.
-2. Formats the text columns (`id`, `game_id`, `batter_number`, `recorded_by`, the team names, `result`, `fielder`, `pa_result`: [`TEXT_COLUMNS`](../apps-script/Code.gs#L44)) as **plain text** ([line 120](../apps-script/Code.gs#L120)). Otherwise Sheets "helpfully" turns a game ID like `2026-05-01` into a date, jersey number `07` into `7`, and `1B` into who knows what.
+2. Formats the text columns (`id`, `game_id`, `batter_number`, `recorded_by`, the team names, `result`, `fielder`, `pa_result`, `session_type`: [`TEXT_COLUMNS`](../apps-script/Code.gs#L44)) as **plain text** ([line 120](../apps-script/Code.gs#L120)). Otherwise Sheets "helpfully" turns a game ID like `2026-05-01` into a date, jersey number `07` into `7`, and `1B` into who knows what.
 3. Creates the empty **Rosters** template if there's no Rosters tab (3.2.1).
 4. Builds the **Summary** tab with six `QUERY` formulas (7.6).
 5. Generates the **token** (a random UUID) if there isn't one, stores it in the script's private **Script properties** ([line 63](../apps-script/Code.gs#L63)), and prints it to the execution log.
@@ -663,17 +676,17 @@ A request with `"action": "rosters"` (3.2.1) takes a different path right after 
 
 | Number | Where | Meaning |
 |---|---|---|
-| `VERSION` | [`Code.gs`](../apps-script/Code.gs#L22), now 5 | Which script this is. Goes up on **every** change to the file, and is sent in every reply. The deploy workflow uses it to confirm the new script is live (16.4) |
-| `SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js#L14), now 2 | The oldest script the app will upload to. Goes up only when the app *needs* something new from the script |
+| `VERSION` | [`Code.gs`](../apps-script/Code.gs#L22), now 6 | Which script this is. Goes up on **every** change to the file, and is sent in every reply. The deploy workflow uses it to confirm the new script is live (16.4) |
+| `SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js#L14), now 6 | The oldest script the app will upload to. Goes up only when the app *needs* something new from the script |
 | `ROSTER_SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js#L16), now 4 | The oldest script the app will ask for rosters |
 
-The app refuses to sync with a script that reports less than `SCRIPT_VERSION`, and says why (*the sheet script is out of date*). That stops an old script, which doesn't know about plate appearances, from answering "ok" and having the app mark them uploaded. Nothing is lost while it waits: everything stays pending on the phone. A script from before rosters doesn't know the `rosters` action, reads the request as an empty upload and answers *No rows*; the app turns that into the same *out of date* message ([line 123](../js/sync.js#L123)).
+The app refuses to sync with a script that reports less than `SCRIPT_VERSION`, and says why (*the sheet script is out of date*). That stops an old script, which doesn't know about plate appearances or `session_type` (version 6: live BP rows would be counted as games), from answering "ok" and having the app mark them uploaded. Nothing is lost while it waits: everything stays pending on the phone. A script from before rosters doesn't know the `rosters` action, reads the request as an empty upload and answers *No rows*; the app turns that into the same *out of date* message ([line 123](../js/sync.js#L123)).
 
 **Updating an existing sheet.** Deploy the new `Code.gs` (automatically from GitHub, or paste it and **Deploy → Manage deployments → Edit → New version**; section 16). On the first upload, [`prepareSheet`](../apps-script/Code.gs#L97) sees that Pitches has the old columns, saves a copy of it as *Pitches (before update …)*, and moves every existing row into the new layout by column name. New columns are left blank for old rows.
 
 ### 7.6 The Summary tab
 
-Six formulas ([line 80](../apps-script/Code.gs#L80)) using Sheets' `QUERY` function, which runs a small SQL-like query over a tab. Columns are referred to by letter. In Pitches: O = pitcher, S = pitch_type, T = zone, U = action, X = pa_result, Y = deleted. In PlateAppearances: F = batting_team, L = batter, M = pitcher, R = result_label, S = category, W = deleted.
+Ten formulas ([line 80](../apps-script/Code.gs#L80)) using Sheets' `QUERY` function, which runs a small SQL-like query over a tab. Columns are referred to by letter. In Pitches: O = pitcher, S = pitch_type, T = zone, U = action, X = pa_result, Y = deleted, AA = session_type. In PlateAppearances: F = batting_team, L = batter, M = pitcher, R = result_label, S = category, W = deleted, Y = session_type. The first six are for games (`and AA <> 'bp'` / `and Y <> 'bp'`); the last four only for live BP, wrapped in `IFERROR` so they say *No live BP recorded yet* instead of an error until the first session.
 
 | Table | Formula (core) | Shows |
 |---|---|---|
@@ -683,12 +696,18 @@ Six formulas ([line 80](../apps-script/Code.gs#L80)) using Sheets' `QUERY` funct
 | Ball-in-play results by pitch type | `… and U = 'IN_PLAY' group by S pivot X` | What happens when FB vs CB is put in play |
 | Results by batter | `select F, L, count(A) where W = false group by F, L pivot R` | Each hitter's singles, walks, strikeouts… |
 | Results against each pitcher | `select M, count(A) where W = false group by M pivot S` | Hits, outs, walks… allowed by each pitcher |
+| Live BP: pitches by pitcher and type | `… and AA = 'bp' group by O pivot S` | Each BP pitcher's mix |
+| Live BP: batter action by pitch type | `… and AA = 'bp' group by S pivot U` | Takes / swings / fouls / in play in BP |
+| Live BP: results by batter | `select L, count(A) where W = false and Y = 'bp' group by L pivot R` | Each hitter's BP results |
+| Live BP: batter vs pitcher | `… and Y = 'bp' group by M pivot L` | Plate appearances for each pitcher–batter pair |
+
+`session_type` is filled for every row: when the layout is updated, old rows get `game`, and an upload without it (from an app older than the column) is a game too (`DEFAULTS` in Code.gs).
 
 `where … = false` leaves out undone rows. If columns are ever reordered, these letters must be updated (16.2). The Summary tab is rebuilt from scratch every time the layout is updated, so anything typed into it by hand is lost; build your own tables in a tab of your own.
 
 ### 7.7 Dashboards
 
-Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets → Pitches**. Add a filter `deleted = false`. Add **PlateAppearances** as a second data source for results. Useful fields to build from: `pitch_type`, `zone`, `action`, `result`, `pa_result`, `batting_team`, `balls_before`/`strikes_before` (for "what does he throw 0–2?"), `pitcher`, `game_id`. A *chase rate*, for instance, is swings where zone = OUT divided by pitches where zone = OUT.
+Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets → Pitches**. Add a filter `deleted = false`, and a control on `session_type` (games, live BP or both). Add **PlateAppearances** as a second data source for results. Useful fields to build from: `pitch_type`, `zone`, `action`, `result`, `pa_result`, `batting_team`, `balls_before`/`strikes_before` (for "what does he throw 0–2?"), `pitcher`, `game_id`. A *chase rate*, for instance, is swings where zone = OUT divided by pitches where zone = OUT.
 
 ---
 
@@ -851,6 +870,8 @@ Your data isn't in the service worker's cache. It's in IndexedDB (section 5), wh
 |---|---|---|
 | Home | [`showHome`](../js/app.js#L120) | *Install on this phone* with **Copy setup link** (in Safari), *Connect to the team sheet* with **Paste & connect** (if not connected), New game, list of games, Settings, Import backup |
 | New game | [`showSetup`](../js/app.js#L332) | Game ID; roster status and **↻ Rosters**; for the away and home teams: roster choice and **Pick starting 9**, name, starting pitcher, 9 lineup rows (3.2.1) |
+| New live BP | [`showBpSetup`](../js/app.js) | Session ID; roster status and **↻ Rosters**; the team's roster, name and pitcher (3.2.2) |
+| Live BP tracker | [`renderBpTracker`](../js/app.js) | Count with ball/strike dots; *Live BP · team*, the batter, PA number, *Last:* line, pitcher and pitch counts; pads, the outcome tree, or **Who's up?**; Undo / End AB / Batter / Pitcher / Log |
 | Tracker | [`renderTracker`](../js/app.js#L574) | Menu, count with ball/strike/out dots, compact sync badge; batter bar with half-inning and batting team, the batter, PA number, inning − / +, a two-line *Last:* line, on deck and pitcher, outs − / +; three pad groups, or the outcome decision tree after a ball in play; Undo / Next batter (asks why) / Lineup / Log |
 | Lineup / Subs | [`showLineupDialog`](../js/app.js#L787) | Both teams, batting team first: all slots editable (a changed name is a substitution), current-batter selector, each team's pitcher; the game's roster suggested as you type |
 | Log | [`showLogDialog`](../js/app.js#L850) | Every plate appearance, newest first, with half-inning, team, each pitch and its result |
@@ -1066,7 +1087,7 @@ flowchart LR
 5. **Run `npm test`.** [`tests/apps-script.test.js`](../tests/apps-script.test.js) runs the real `Code.gs` (16.3).
 6. **Open a pull request and merge it into `main`.** The merge ships both halves: GitHub Pages serves the app files, and the workflow deploys the script (16.4).
 
-**Keep the script backward compatible.** Phones update at different times (10.2), so for a while old apps talk to the new script. They send rows without the new fields; [`upsert`](../apps-script/Code.gs#L239) leaves those cells blank, which is fine. The reverse, a new app talking to an old script, is what `SCRIPT_VERSION` blocks, safely: pitches just wait on the phone (7.5, *Versions*).
+**Keep the script backward compatible.** Phones update at different times (10.2), so for a while old apps talk to the new script. They send rows without the new fields; [`upsert`](../apps-script/Code.gs#L239) leaves those cells blank (or fills the default from `DEFAULTS`, like `session_type` = `game`), which is fine. The reverse, a new app talking to an old script, is what `SCRIPT_VERSION` blocks, safely: pitches just wait on the phone (7.5, *Versions*).
 
 ### 16.3 Testing the script without Google
 

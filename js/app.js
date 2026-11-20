@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import {
-  PITCH_TYPES, ACTIONS, RESULT_LABELS, PA_END_LABELS, PA_RESULTS, OUTCOME_TREE, NEXT_BATTER_REASONS,
+  PITCH_TYPES, ACTIONS, RESULT_LABELS, PA_END_LABELS, PA_RESULTS, OUTCOME_TREE, NEXT_BATTER_REASONS, BP_NEXT_REASONS, isBp,
   replay, buildPitchRow, pitchPaRow, outcomePaRow, nextBatterPaRow, activeEvents,
   battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel, gameTeams,
 } from './game.js';
@@ -18,6 +18,7 @@ const LINEUP_SIZE = 9;
 let current = null; // { game, events, state }
 let sel = { pitchType: null, zone: null, action: null };
 let tree = { category: null, result: null }; // ball-in-play decision tree progress
+let picking = false; // live BP: changing the batter in the middle of an at-bat
 let persistence = 'unknown';
 let settingsCache = {}; // { url, token, recorder, deviceId, appliedLink }
 let updateReady = false;  // a new version has taken over; reload at the next safe moment
@@ -140,11 +141,14 @@ async function showHome() {
         <input id="connect-input" placeholder="https://…#c=…" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="row-buttons"><button data-act="connect">Connect</button></div>
       </div>`}
-      <button class="big primary" data-act="new">＋ New game</button>
+      <div class="new-buttons">
+        <button class="big primary" data-act="new">＋ New game</button>
+        <button class="big" data-act="new-bp">＋ Live BP</button>
+      </div>
       <h2>Games</h2>
       <ul class="list">
         ${games.map((g) => `<li><button class="row" data-act="open" data-key="${esc(g.key)}">
-            <strong>${esc(g.gameId)}</strong>
+            <strong>${esc(g.gameId)}${isBp(g) ? ' <span class="tag">Live BP</span>' : ''}</strong>
             <span>${new Date(g.createdAt).toLocaleString()}</span></button></li>`).join('')
           || '<li class="muted">No games yet.</li>'}
       </ul>
@@ -159,6 +163,7 @@ async function showHome() {
     if (!btn) return;
     const act = btn.dataset.act;
     if (act === 'new') showSetup();
+    else if (act === 'new-bp') showBpSetup();
     else if (act === 'open') showTracker(btn.dataset.key);
     else if (act === 'settings') showSettings();
     else if (act === 'sync') showSyncDialog();
@@ -465,6 +470,102 @@ async function showSetup() {
   };
 }
 
+// Live BP: one team, its own pitchers against its own hitters, batters picked as they come up.
+async function showBpSetup() {
+  app.classList.remove('tracker-mode');
+  const today = new Date().toISOString().slice(0, 10);
+  let { rosters, fetchedAt } = await db.getRosters();
+  const connected = !!settingsCache.url;
+  app.innerHTML = `
+    <header class="bar">
+      <button class="icon" data-act="back" aria-label="Back">‹</button>
+      <h1>Live BP</h1>
+      <span></span>
+    </header>
+    <main class="page">
+      <form id="bp-setup" autocomplete="off">
+        <p class="muted small">Your own pitchers against your own hitters. No batting order, innings or outs:
+          after every at-bat the app asks who's up.</p>
+        <label>Session ID<input name="gameId" required value="${today}-BP" autocapitalize="characters"></label>
+        ${connected ? '<div class="roster-status" id="roster-status"></div>' : ''}
+        <fieldset class="team">
+          <legend>Team</legend>
+          <div class="roster-choice" id="roster-choice-0"></div>
+          <label>Team name<input name="t0_team" value="" autocapitalize="words" placeholder="Team"></label>
+          <label>Pitcher <span class="muted">(change any time)</span><input name="t0_pitcher" autocapitalize="words" autocomplete="off" list="roster-list-0"></label>
+          <div id="roster-lists-0"></div>
+        </fieldset>
+        <button class="big primary" type="submit">Start live BP</button>
+      </form>
+    </main>`;
+  const form = document.getElementById('bp-setup');
+  let chosen = null;
+  let rosterError = connected ? null : '';
+  let loading = connected;
+  const draw = () => {
+    const status = document.getElementById('roster-status');
+    if (status) {
+      status.innerHTML = `<span class="small ${rosterError ? 'roster-error' : 'muted'}">${loading ? 'Loading rosters…'
+        : rosterError ? `Rosters not loaded: ${esc(rosterError)}`
+        : rosters.length ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} from the sheet${fetchedAt ? ` · ${new Date(fetchedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}` : ''}`
+        : 'No rosters yet. Fill in the <b>Rosters</b> tab of the sheet, then refresh.'}</span>
+        <button type="button" data-act="refresh-rosters" ${loading ? 'disabled' : ''}>↻ Rosters</button>`;
+    }
+    if (chosen) chosen = rosters.find((r) => r.name === chosen.name) || null;
+    document.getElementById('roster-choice-0').innerHTML = rosters.length ? `
+      <label>Roster <span class="muted">(the batters to pick from)</span>
+        <select name="t0_roster">
+          <option value="">— type names as they come up —</option>
+          ${rosters.map((r, i) => `<option value="${i}" ${r === chosen ? 'selected' : ''}>${esc(r.name)} (${r.players.length})</option>`).join('')}
+        </select></label>` : '';
+    document.getElementById('roster-lists-0').innerHTML = rosterDatalist('roster-list-0', chosen?.players);
+  };
+  const refresh = async (quiet) => {
+    loading = true;
+    draw();
+    try {
+      ({ rosters, fetchedAt } = await fetchRosters());
+      rosterError = null;
+      if (!quiet) toast(rosters.length ? `${rosters.length} roster${rosters.length > 1 ? 's' : ''} loaded` : 'The Rosters tab is empty');
+    } catch (err) {
+      rosterError = err.message;
+    }
+    loading = false;
+    if (document.body.contains(form)) draw();
+  };
+  if (connected) refresh(true); else draw();
+  wireRosterInputs(form, () => chosen?.players);
+  form.addEventListener('change', (e) => {
+    if (e.target.name !== 't0_roster') return;
+    const before = chosen;
+    chosen = rosters[e.target.value] || null;
+    const team = form.querySelector('[name="t0_team"]');
+    if (chosen && [before?.name, ''].includes(team.value.trim())) team.value = chosen.name;
+    draw();
+  });
+  app.onclick = (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    if (btn.dataset.act === 'back') showHome();
+    else if (btn.dataset.act === 'refresh-rosters') refresh(false);
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = new FormData(form);
+    const gameId = String(f.get('gameId')).trim();
+    if (!gameId) { toast('Enter a session ID', 'error'); return; }
+    const team = {
+      name: String(f.get('t0_team')).trim() || chosen?.name || 'Team',
+      pitcher: String(f.get('t0_pitcher')).trim(),
+      lineup: [],
+      ...(chosen ? { roster: chosen } : {}),
+    };
+    const game = { key: uuid(), gameId, mode: 'bp', teams: [team], createdAt: Date.now() };
+    await db.putGame(game);
+    showTracker(game.key);
+  };
+}
+
 // ---------- tracker ----------
 async function showTracker(key) {
   const game = await db.getGame(key);
@@ -475,6 +576,7 @@ async function showTracker(key) {
   if (!history.state?.tracker) history.pushState({ tracker: true }, '', location.href);
   sel = { pitchType: null, zone: null, action: null };
   tree = { category: null, result: null };
+  picking = false;
   renderTracker();
 }
 
@@ -572,7 +674,123 @@ function treeHTML() {
     </div></section>`;
 }
 
+// Live BP: finished plate appearances per batter in this session, for the "who's up" buttons.
+function bpAtBats() {
+  const n = new Map();
+  for (const e of activeEvents(current.events)) if (e.paRow) n.set(e.paRow.batter, (n.get(e.paRow.batter) || 0) + 1);
+  return n;
+}
+const bpRoster = () => gameTeams(current.game)[0]?.roster?.players || [];
+
+// Live BP: who's up? Shown in place of the pads after every at-bat.
+function whoUpHTML() {
+  const { state } = current;
+  const last = state.batter;
+  const pitcher = findByName(bpRoster(), state.teams[0].pitcher);
+  const abs = bpAtBats();
+  const players = bpRoster().map((p, i) => ({ p, i })).filter(({ p }) => p !== pitcher);
+  return `<section class="group group-whoup">
+    <div class="tree-head">
+      ${picking ? '<button data-act="bp-cancel" class="tree-back">‹ Cancel</button>' : ''}
+      <h3>${picking ? `Change batter <span class="muted">(${playerLabel(last)}'s at-bat is left unfinished)</span>` : "Who's up?"}</h3>
+    </div>
+    ${last && !picking ? `<button class="pad same" data-act="bp-same">Same batter again: ${playerLabel(last)}</button>` : ''}
+    <div class="bench whoup">
+      ${players.map(({ p, i }) => `<button type="button" data-act="bp-pick" data-i="${i}" class="${last && p.name === last.name ? 'last-up' : ''}">
+        <span>${rosterPlayerLabel(p)}</span>${abs.get(p.name) ? `<span class="note">${abs.get(p.name)} PA</span>` : ''}</button>`).join('')}
+    </div>
+    <div class="whoup-other">
+      <input id="bp-name" placeholder="${players.length ? 'Someone else: name or #' : 'Batter name or #'}" autocomplete="off" autocapitalize="words"${players.length ? ' list="bp-list"' : ''}>
+      <button data-act="bp-other" class="primary">Up</button>
+      ${rosterDatalist('bp-list', bpRoster())}
+    </div>
+  </section>`;
+}
+
+function renderBpTracker() {
+  const { state } = current;
+  const t = state.teams[0];
+  const batter = currentBatter(state);
+  const pending = !!state.pending;
+  const asking = state.awaitingBatter || picking;
+  if (!pending) tree = { category: null, result: null };
+  const abs = bpAtBats().get(batter.name) || 0;
+  app.classList.add('tracker-mode');
+  app.innerHTML = `
+    <header class="scorebar">
+      <button class="icon" data-act="menu" aria-label="Menu">☰</button>
+      <div class="count" aria-label="Count ${state.balls} balls ${state.strikes} strikes">
+        <div class="count-num">${state.balls}<span>-</span>${state.strikes}</div>
+        <div class="count-dots"><span>B ${dots(state.balls, 3, 'ball')}</span><span>S ${dots(state.strikes, 2, 'strike')}</span></div>
+      </div>
+      ${badgeHTML(getSyncStatus(), true)}
+    </header>
+    <div class="batter-bar bp">
+      <div class="batter-name"><span class="label">Live BP${t.name ? ` · ${esc(t.name)}` : ''}</span>
+        <strong>${state.awaitingBatter ? '<span class="muted">Pick the batter</span>' : playerLabel(batter)}</strong><span class="muted"> · PA ${state.paNumber}</span></div>
+      <div class="last ${current.last?.paEnd ? 'pa-end' : ''}">${current.last?.html || '&nbsp;'}</div>
+      <div class="muted small deck">${t.pitcher ? `P: ${esc(t.pitcher)} (${t.pitcherPitches})` : 'P: not entered'} · ${state.pitchNumber} pitches${!state.awaitingBatter && abs ? ` · ${esc(batter.name)} ${abs} PA today` : ''}</div>
+    </div>
+    <main class="tracker ${pending ? 'tree' : ''} ${asking && !pending ? 'whoup-mode' : ''}">
+      ${pending ? treeHTML() : asking ? whoUpHTML() : `
+      ${padGroup('Pitch', 'pitchType', { FB: 'Fastball', CB: 'Curveball' }, 2)}
+      ${padGroup('Zone', 'zone', { IN: 'In', OUT: 'Out' }, 2)}
+      ${padGroup('Batter', 'action', { TAKE: 'Take', SWING: 'Swing', FOUL: 'Foul', IN_PLAY: 'In play' }, 4)}`}
+    </main>
+    <footer class="actions bp">
+      <button data-act="undo" ${activeEvents(current.events).length ? '' : 'disabled'}>↶ Undo</button>
+      <button data-act="next" ${pending || state.awaitingBatter ? 'disabled' : ''}>End AB</button>
+      <button data-act="bp-batter" ${pending || asking ? 'disabled' : ''}>Batter</button>
+      <button data-act="bp-pitcher">Pitcher</button>
+      <button data-act="log">Log</button>
+    </footer>`;
+  app.onclick = (e) => { queue = queue.then(() => handleTrackerClick(e)).catch((err) => toast(`Error: ${esc(err.message)}`, 'error')); };
+  const input = document.getElementById('bp-name');
+  if (input) input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); document.querySelector('[data-act=bp-other]')?.click(); } };
+}
+
+async function pickBatter(p) {
+  if (!p?.name) { toast('Type the batter\'s name', 'error'); return; }
+  const wasMid = picking;
+  await addEvent('batterUp', { name: p.name, number: p.number || '' });
+  picking = false;
+  current.last = { html: `${wasMid ? 'Batter changed: ' : 'Up: '}<b>${playerLabel(p)}</b>`, paEnd: false };
+  renderTracker();
+}
+
+function showBpPitcherDialog() {
+  const t = current.state.teams[0];
+  const players = bpRoster();
+  const dlg = openDialog(`
+    <form method="dialog">
+      <h2>Pitcher</h2>
+      <p class="muted small">Now: ${t.pitcher ? `<b>${esc(t.pitcher)}</b> · ${t.pitcherPitches} pitches` : 'not entered'}. A new pitcher starts a new pitch count.</p>
+      ${players.length ? `<div class="bench">${players.map((p, i) => `<button type="button" data-act="bp-p" data-i="${i}" ${p.name === t.pitcher ? 'disabled' : ''}>${rosterPlayerLabel(p)}</button>`).join('')}</div>` : ''}
+      <label>Or type a name<input name="pitcher" autocapitalize="words" autocomplete="off"></label>
+      <div class="row-buttons">
+        <button type="button" data-act="close">Cancel</button>
+        <button type="button" class="primary" data-act="bp-p-save">Save</button>
+      </div>
+    </form>`, (act, btn, d) => {
+    let name = null;
+    if (act === 'bp-p') name = players[Number(btn.dataset.i)]?.name;
+    else if (act === 'bp-p-save') {
+      const typed = d.querySelector('[name=pitcher]').value.trim();
+      name = findByName(players, typed)?.name || typed;
+    } else return;
+    if (!name || name === t.pitcher) { d.close(); return; }
+    d.close();
+    queue = queue.then(async () => {
+      await addEvent('pitcher', { team: 0, name });
+      current.last = { html: `New pitcher: <b>${esc(name)}</b>`, paEnd: false };
+      renderTracker();
+    }).catch((err) => toast(`Error: ${esc(err.message)}`, 'error'));
+  });
+  dlg.querySelector('form').onsubmit = (e) => e.preventDefault();
+}
+
 function renderTracker() {
+  if (current.state.bp) { renderBpTracker(); return; }
   const { state } = current;
   const bi = battingIndex(state);
   const bt = battingTeam(state);
@@ -674,6 +892,25 @@ async function handleTrackerClick(e) {
     await addEvent('outs', { delta });
     current.last = { html: `${delta > 0 ? 'Added' : 'Removed'} an out${halfEndNote()}`, paEnd: false };
     renderTracker();
+  } else if (act === 'bp-same') {
+    if (current.state.awaitingBatter && current.state.batter) await pickBatter(current.state.batter);
+  } else if (act === 'bp-pick') {
+    const p = bpRoster()[Number(btn.dataset.i)];
+    if (p) await pickBatter(p);
+  } else if (act === 'bp-other') {
+    const typed = document.getElementById('bp-name')?.value.trim() || '';
+    const roster = bpRoster();
+    const p = findByName(roster, typed) || findByNumber(roster, typed.replace(/^#/, ''))
+      || (typed ? { name: typed, number: '' } : null);
+    await pickBatter(p);
+  } else if (act === 'bp-batter') {
+    picking = true;
+    renderTracker();
+  } else if (act === 'bp-cancel') {
+    picking = false;
+    renderTracker();
+  } else if (act === 'bp-pitcher') {
+    showBpPitcherDialog();
   } else if (act === 'lineup') {
     showLineupDialog();
   } else if (act === 'log') {
@@ -723,14 +960,16 @@ async function recordOutcome({ category, result, fielder }) {
 
 function showNextBatterDialog() {
   const batter = playerLabel(currentBatter(current.state));
+  const bp = !!current.state.bp;
+  const reasons = Object.entries(NEXT_BATTER_REASONS).filter(([k]) => !bp || BP_NEXT_REASONS.includes(k));
   openDialog(`
-    <h2>Next batter: why?</h2>
+    <h2>${bp ? 'End the at-bat: why?' : 'Next batter: why?'}</h2>
     <p class="muted small">${batter}'s plate appearance ends without a pitch result.</p>
     <div class="menu reasons">
-      ${Object.entries(NEXT_BATTER_REASONS).map(([k, r]) => `<button data-act="reason" data-reason="${k}" class="${k === 'other' ? '' : 'primary'}">${r.label}${r.outs ? ' <span class="muted-on">· 1 out</span>' : ''}</button>`).join('')}
+      ${reasons.map(([k, r]) => `<button data-act="reason" data-reason="${k}" class="${k === 'other' ? '' : 'primary'}">${r.label}${r.outs ? ' <span class="muted-on">· 1 out</span>' : ''}</button>`).join('')}
       <button data-act="close">Cancel</button>
     </div>
-    <p class="muted small">“Other / correction” only moves to the next batter and records no result.</p>`, (act, btn, dlg) => {
+    <p class="muted small">“Other / correction” only ${bp ? 'ends the at-bat' : 'moves to the next batter'} and records no result.</p>`, (act, btn, dlg) => {
     if (act !== 'reason') return;
     dlg.close();
     queue = queue.then(async () => {
@@ -738,7 +977,7 @@ function showNextBatterDialog() {
       const ev = await addEvent('nextBatter', { reason });
       current.last = ev.paRow
         ? { html: `<b>${esc(ev.paRow.batter)}: ${PA_RESULTS[reason].label}</b>${halfEndNote()}`, paEnd: true }
-        : { html: 'Moved to next batter', paEnd: false };
+        : { html: bp ? 'At-bat ended' : 'Moved to next batter', paEnd: false };
       renderTracker();
       if (ev.paRow) { await refreshPending(); syncSoon(); }
     }).catch((err) => toast(`Error: ${esc(err.message)}`, 'error'));
@@ -752,6 +991,7 @@ function describeEvent(ev) {
     case 'nextBatter': return ev.data.reason && ev.data.reason !== 'other'
       ? `next batter (${NEXT_BATTER_REASONS[ev.data.reason].label})` : 'next batter';
     case 'setBatter': return 'batter change';
+    case 'batterUp': return `batter pick (${esc(ev.data.name)})`;
     case 'sub': return `substitution (${esc(ev.data.name)})`;
     case 'pitcher': return `pitcher change (${esc(ev.data.name)})`;
     case 'inning': case 'half': return 'inning change';
@@ -782,6 +1022,7 @@ async function undo() {
   current.state = replay(current.game, current.events);
   sel = { pitchType: null, zone: null, action: null };
   tree = { category: null, result: null };
+  picking = false;
   current.last = { html: `Undid ${describeEvent(last)}`, paEnd: false };
   renderTracker();
   await refreshPending();
@@ -945,7 +1186,8 @@ function showLogDialog() {
     if (e.row) entry(e.row).rows.push(e.row);
     if (e.paRow) entry(e.paRow).pa = e.paRow;
   }
-  const where = (r) => (r.half ? `${r.half === 'bottom' ? '▼' : '▲'}${r.inning} ${esc(r.batting_team)}` : `Inn ${r.inning}`);
+  const where = (r) => (r.session_type === 'bp' ? `P: ${esc(r.pitcher || '?')}`
+    : r.half ? `${r.half === 'bottom' ? '▼' : '▲'}${r.inning} ${esc(r.batting_team)}` : `Inn ${r.inning}`);
   const items = [...byPa.entries()].reverse().map(([pa, { head, rows, pa: p }]) => {
     const end = rows.at(-1)?.pa_end;
     const tag = p ? `${p.result_label}${p.fielder ? ` (${esc(p.fielder)})` : ''}` : (end ? PA_END_LABELS[end] : '');

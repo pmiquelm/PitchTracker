@@ -101,7 +101,7 @@ export const PITCH_COLUMNS = [
   'outs_before', 'pa_number', 'pitch_number', 'pitch_in_pa', 'lineup_slot',
   'batter_number', 'batter', 'pitcher', 'pitcher_pitch_count', 'balls_before',
   'strikes_before', 'pitch_type', 'zone', 'action', 'result', 'pa_end', 'pa_result',
-  'deleted', 'recorded_by',
+  'deleted', 'recorded_by', 'session_type',
 ];
 
 // Column order of the "PlateAppearances" sheet (one row per finished plate
@@ -110,8 +110,15 @@ export const PA_COLUMNS = [
   'id', 'game_id', 'recorded_at', 'inning', 'half', 'batting_team', 'pitching_team',
   'outs_before', 'pa_number', 'lineup_slot', 'batter_number', 'batter', 'pitcher',
   'pitches', 'balls', 'strikes', 'result', 'result_label', 'category', 'batted_ball',
-  'fielder', 'outs_on_play', 'deleted', 'recorded_by',
+  'fielder', 'outs_on_play', 'deleted', 'recorded_by', 'session_type',
 ];
+
+// ---- Live BP sessions ----
+// A session where one team's pitchers face its own hitters, in no set order: the
+// recorder picks the batter after every at-bat. No innings, no outs.
+export const isBp = (game) => game?.mode === 'bp';
+// "Next batter" reasons that make sense in live BP.
+export const BP_NEXT_REASONS = ['HBP', 'other'];
 
 export function pitchResult(zone, action) {
   switch (action) {
@@ -151,6 +158,15 @@ export function gameTeams(game) {
 }
 
 export function initialState(game) {
+  if (isBp(game)) {
+    const t = gameTeams(game)[0];
+    return {
+      ...initialState({ teams: [{ name: t.name, lineup: [], pitcher: t.pitcher }] }),
+      bp: true,
+      batter: null,         // { number, name } of the batter at the plate
+      awaitingBatter: true, // true until the next batter is picked
+    };
+  }
   return {
     teams: gameTeams(game).map((t) => ({
       name: t.name || '',
@@ -178,6 +194,7 @@ export const fieldingIndex = (s) => (s.teams.length > 1 ? 1 - battingIndex(s) : 
 export const battingTeam = (s) => s.teams[battingIndex(s)];
 export const fieldingTeam = (s) => s.teams[fieldingIndex(s)];
 export const currentBatter = (s) => {
+  if (s.bp) return s.batter || { number: '', name: '' };
   const t = battingTeam(s);
   return t.lineup[t.slot] || { number: '', name: '' };
 };
@@ -195,6 +212,14 @@ function resetCount(s) {
 }
 
 function nextBatter(s, reason) {
+  if (s.bp) {
+    // Nobody is "next" in BP: keep the last batter (for "same batter again") and ask.
+    resetCount(s);
+    s.paNumber += 1;
+    s.lastPaEnd = reason;
+    s.awaitingBatter = true;
+    return;
+  }
   const bi = battingIndex(s);
   const t = s.teams[bi];
   patchTeam(s, bi, { slot: (t.slot + 1) % t.lineup.length });
@@ -218,6 +243,7 @@ function settlePending(s) {
 }
 
 function stepHalf(s, delta) {
+  if (s.bp) return; // no innings in BP
   abandonPa(s);
   s.outs = 0;
   if (s.teams.length === 1) {
@@ -231,6 +257,7 @@ function stepHalf(s, delta) {
 }
 
 function addOuts(s, n) {
+  if (s.bp) return; // no outs in BP
   s.outs = Math.max(0, s.outs + n);
   if (s.outs >= 3) {
     stepHalf(s, 1);
@@ -281,6 +308,14 @@ export function reduce(prev, ev) {
       patchTeam(s, battingIndex(s), { slot: d.slot });
       abandonPa(s);
       return s;
+    case 'batterUp':
+      // BP: the batter now at the plate. Picked mid at-bat (a correction), the
+      // at-bat so far is left unfinished, like setBatter.
+      settlePending(s);
+      abandonPa(s);
+      s.batter = { number: d.number || '', name: d.name || '' };
+      s.awaitingBatter = false;
+      return s;
     case 'sub': {
       const ti = d.team ?? battingIndex(s);
       patchTeam(s, ti, {
@@ -321,6 +356,24 @@ function situation(game, state, ev) {
   const bt = battingTeam(state);
   const ft = fieldingTeam(state);
   const batter = currentBatter(state);
+  if (state.bp) {
+    return {
+      id: ev.id,
+      game_id: game.gameId,
+      recorded_at: new Date(ev.createdAt).toISOString(),
+      inning: '',
+      half: '',
+      batting_team: bt.name,
+      pitching_team: bt.name, // the same team on both sides
+      outs_before: '',
+      pa_number: state.paNumber,
+      lineup_slot: '',
+      batter_number: batter.number,
+      batter: batter.name,
+      pitcher: ft.pitcher,
+      session_type: 'bp',
+    };
+  }
   return {
     id: ev.id,
     game_id: game.gameId,
@@ -335,6 +388,7 @@ function situation(game, state, ev) {
     batter_number: batter.number,
     batter: batter.name,
     pitcher: ft.pitcher,
+    session_type: 'game',
   };
 }
 
@@ -368,6 +422,7 @@ export function buildPitchRow(game, state, input, ev) {
     pa_end: r.paEnd || '',
     pa_result: { walk: 'BB', strikeout: 'K' }[r.paEnd] || '', // a ball in play gets its result later
     deleted: false,
+    session_type: base.session_type,
   };
 }
 

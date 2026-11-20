@@ -16,7 +16,7 @@ test('testConnection posts an empty upload with the token', async (t) => {
   let sent;
   t.mock.method(globalThis, 'fetch', async (url, opts) => {
     sent = { url, opts };
-    return new Response(JSON.stringify({ ok: true, version: 2, received: 0 }));
+    return new Response(JSON.stringify({ ok: true, version: 6, received: 0 }));
   });
   await testConnection(URL, 'tok');
   assert.equal(sent.url, URL);

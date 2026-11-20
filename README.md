@@ -151,12 +151,30 @@ a roster name fixes its spelling and fills the number, and a roster number fills
 A game keeps its own copy of the roster it started with, so editing the Rosters tab never changes games already recorded.
 Rosters need script version 4 or later. Uploading pitches works with older scripts too.
 
-### 6. Dashboard
+### 6. Live BP sessions
 
-- The **Summary** tab has starter pivots: pitches by pitcher and type, batter action by pitch type, zone by pitch type,
-  ball-in-play results by pitch type, results by batter and results against each pitcher.
+**＋ Live BP** on the home screen tracks live batting practice: your own pitchers against your own hitters. Pick the
+team's roster and the pitcher, then **Start live BP**. There's no batting order, no innings and no outs: after every
+at-bat the pads make way for **Who's up?**, a grid of the roster (the pitcher left out, each player's plate appearances so far)
+with **Same batter again** at the top and a box for anyone not on the roster. Pitches, the count and the ball-in-play
+outcomes work as in a game.
+
+- **End AB** ends an at-bat without a pitch result (hit by pitch, or *Other / correction*).
+- **Batter** changes the batter in the middle of an at-bat (that at-bat is left unfinished).
+- **Pitcher** changes the pitcher; each one has their own pitch count.
+
+BP rows go to the same Pitches and PlateAppearances tabs with `session_type` = `bp`, the team's name as both
+`batting_team` and `pitching_team`, and `inning`, `half`, `outs_before` and `lineup_slot` left empty.
+Live BP needs script version 6 or later: until the new script is deployed, rows wait on the phone.
+
+### 7. Dashboard
+
+- The **Summary** tab has starter pivots for games (live BP left out): pitches by pitcher and type, batter action by pitch type, zone by pitch type,
+  ball-in-play results by pitch type, results by batter and results against each pitcher. Below them, the same for
+  live BP: pitches by pitcher and type, batter action by pitch type, results by batter, and batter vs pitcher.
 - For a proper dashboard, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
-  Add a filter `deleted = false`. Add the **PlateAppearances** tab as a second source for results.
+  Add a filter `deleted = false`, and a filter control on `session_type` to show games, live BP or both.
+  Add the **PlateAppearances** tab as a second source for results.
 
 ## Sheet columns
 
@@ -183,6 +201,7 @@ Rosters need script version 4 or later. Uploading pitches works with older scrip
 | `pa_result` | on the last pitch of a plate appearance: its result code (`K`, `BB`, `2B`, `GO`…) |
 | `deleted` | TRUE if undone in the app |
 | `recorded_by` | the recorder's name from Settings, or `device-xxxxxx` |
+| `session_type` | `game`, or `bp` for live BP (rows from before this column are `game`) |
 | `synced_at` | when the sheet last received the row |
 
 **PlateAppearances** (one row per finished plate appearance), with the same `id` … `pitcher` situation columns plus:
@@ -197,7 +216,7 @@ Rosters need script version 4 or later. Uploading pitches works with older scrip
 | `batted_ball` | `ground`, `line`, `fly`, `bunt` where the choice says so |
 | `fielder` | `P` `C` `1B` `2B` `3B` `SS` `LF` `CF` `RF`, or empty if skipped |
 | `outs_on_play` | outs the app counted for the play |
-| `deleted`, `recorded_by`, `synced_at` | as above |
+| `deleted`, `recorded_by`, `session_type`, `synced_at` | as above |
 
 ## Development
 

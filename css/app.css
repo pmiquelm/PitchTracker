@@ -366,3 +366,15 @@ dialog h2 { margin: 0 0 0.6rem; font-size: 1.2rem; }
 .center { text-align: center; }
 .qr-rules { padding-left: 1.1rem; margin: 0.4rem 0; }
 .qr-rules li { margin: 0.25rem 0; }
+
+/* ---- live BP ---- */
+.new-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.actions.bp { grid-template-columns: repeat(5, 1fr); gap: 0.35rem; }
+.group-whoup { overflow-y: auto; gap: 0.5rem; }
+.group-whoup .tree-head h3 .muted { font-weight: 400; }
+.group-whoup .pad.same { flex: none; min-height: 64px; font-size: 1.2rem; border-color: var(--accent); color: var(--accent); }
+.group-whoup .pad.same:active { background: var(--accent); color: #fff; }
+.bench.whoup button { min-height: 52px; font-size: 1.05rem; }
+.bench.whoup button.last-up { border-color: var(--accent); }
+.whoup-other { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: center; }
+.whoup-other button { min-height: 44px; padding: 0.4rem 1.1rem; }
