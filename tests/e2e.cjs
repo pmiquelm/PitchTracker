@@ -348,8 +348,16 @@ const OUT = process.argv[2];
   await c.waitForSelector('select[name=t0_roster]');
   await c.selectOption('select[name=t0_roster]', '0');
   assert.equal(await c.inputValue('input[name=t0_team]'), 'Eagles');
+  // The pitcher is picked from the roster with a tap (tap again clears); typing still works
+  assert.equal(await c.locator('#pitcher-pick button').count(), 14);
+  await c.click('#pitcher-pick button:has-text("Player M")'); await c.click('#pitcher-pick button:has-text("Player M")');
+  assert.equal(await c.inputValue('input[name=t0_pitcher]'), '');
+  await c.click('#pitcher-pick button:has-text("Player N")');
+  assert.equal(await c.inputValue('input[name=t0_pitcher]'), 'Player N');
+  assert.equal(await c.locator('#pitcher-pick button.selected').textContent(), '#14 Player N');
   await c.fill('input[name=t0_pitcher]', 'player n'); await c.press('input[name=t0_pitcher]', 'Tab');
   assert.equal(await c.inputValue('input[name=t0_pitcher]'), 'Player N');
+  await c.waitForSelector('#pitcher-pick button.selected:has-text("Player N")');
   await c.screenshot({ path: OUT + '/17-bp-setup.png' });
   await c.click('#bp-setup [type=submit]');
   await c.waitForSelector('.group-whoup');
