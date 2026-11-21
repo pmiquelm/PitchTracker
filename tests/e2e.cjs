@@ -310,7 +310,10 @@ const OUT = process.argv[2];
   await c.fill('input[name=t1_name6]', ''); await c.fill('input[name=t1_num6]', '13'); await c.press('input[name=t1_num6]', 'Tab');
   assert.equal(await c.inputValue('input[name=t1_name6]'), 'Player M');
   await c.screenshot({ path: OUT + '/15-roster-setup.png', fullPage: true });
+  // An ID without a date is refused: the dashboard orders games by it
   await c.fill('input[name=gameId]', 'ROSTER-1'); await c.getByText('Start game').click();
+  assert.equal(await c.locator('header h1').textContent(), 'New game', 'undated game ID refused');
+  await c.fill('input[name=gameId]', '2026-11-18-ROSTER-1'); await c.getByText('Start game').click();
   await waitFor(c, /Player N \(0\)/); // the home roster's pitcher faces the away batters
   // Bottom of the 1st: the Eagles bat. Sub from the bench by name: the number comes along
   await c.click('[data-act=half][data-delta="1"]'); await waitFor(c, /Player B/);
@@ -395,7 +398,7 @@ const OUT = process.argv[2];
   const bpRows = coachRows.filter(r => r.session_type === 'bp');
   assert.ok(bpRows.length >= 5, 'BP pitches uploaded');
   for (const r of bpRows) assert.deepEqual([r.batting_team, r.pitching_team, r.inning, r.outs_before, r.lineup_slot], ['Eagles', 'Eagles', '', '', '']);
-  assert.ok(coachRows.filter(r => r.game_id === 'ROSTER-1').every(r => r.session_type === 'game'));
+  assert.ok(coachRows.filter(r => r.game_id === '2026-11-18-ROSTER-1').every(r => r.session_type === 'game'));
   await c.click('[data-act=log]'); assert.match(await c.textContent('dialog'), /P: Player N/); await c.click('dialog [data-act=close]');
   await c.click('[data-act=menu]'); await c.click('dialog [data-act=exit]');
   await c.waitForSelector('.tag:has-text("Live BP")');

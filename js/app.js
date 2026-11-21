@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import {
   PITCH_TYPES, ACTIONS, RESULT_LABELS, PA_END_LABELS, PA_RESULTS, OUTCOME_TREE, NEXT_BATTER_REASONS, BP_NEXT_REASONS, isBp,
+  gameDate, localDate,
   replay, buildPitchRow, pitchPaRow, outcomePaRow, nextBatterPaRow, activeEvents,
   battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel, gameTeams,
 } from './game.js';
@@ -337,7 +338,7 @@ function showRosterPicker(form, t, roster) {
 // ---------- setup ----------
 async function showSetup() {
   app.classList.remove('tracker-mode');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   let { rosters, fetchedAt } = await db.getRosters();
   const connected = !!settingsCache.url;
   // Team 0 is the away team (bats in the top of each inning), team 1 the home team.
@@ -365,7 +366,8 @@ async function showSetup() {
     </header>
     <main class="page">
       <form id="setup" autocomplete="off">
-        <label>Game ID<input name="gameId" required value="${today}-" autocapitalize="characters"></label>
+        <label>Game ID<input name="gameId" required value="${today}-" autocapitalize="characters" pattern="\\s*\\d{4}-\\d{2}-\\d{2}.*" title="Start with the date, like ${today}-OPPONENT GAME 1"></label>
+        <p class="muted small">Starts with the game's date (YYYY-MM-DD). For a doubleheader add GAME 1 or GAME 2.</p>
         ${connected ? '<div class="roster-status" id="roster-status"></div>' : ''}
         <div class="teams">
           ${teamForm(0, 'Away team <span class="muted">· bats first</span>')}
@@ -464,6 +466,7 @@ async function showSetup() {
       };
     });
     if (!gameId) { toast('Enter a game ID', 'error'); return; }
+    if (!gameDate(gameId)) { toast(`Start the game ID with its date, like ${localDate()}-OPPONENT GAME 1`, 'error'); return; }
     const game = { key: uuid(), gameId, teams, createdAt: Date.now() };
     await db.putGame(game);
     showTracker(game.key);
@@ -473,7 +476,7 @@ async function showSetup() {
 // Live BP: one team, its own pitchers against its own hitters, batters picked as they come up.
 async function showBpSetup() {
   app.classList.remove('tracker-mode');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   let { rosters, fetchedAt } = await db.getRosters();
   const connected = !!settingsCache.url;
   app.innerHTML = `
@@ -486,7 +489,7 @@ async function showBpSetup() {
       <form id="bp-setup" autocomplete="off">
         <p class="muted small">Your own pitchers against your own hitters. No batting order, innings or outs:
           after every at-bat the app asks who's up.</p>
-        <label>Session ID<input name="gameId" required value="${today}-BP" autocapitalize="characters"></label>
+        <label>Session ID<input name="gameId" required value="${today}-BP" autocapitalize="characters" pattern="\\s*\\d{4}-\\d{2}-\\d{2}.*" title="Start with the date, like ${today}-BP"></label>
         ${connected ? '<div class="roster-status" id="roster-status"></div>' : ''}
         <fieldset class="team">
           <legend>Team</legend>
@@ -574,6 +577,7 @@ async function showBpSetup() {
     const f = new FormData(form);
     const gameId = String(f.get('gameId')).trim();
     if (!gameId) { toast('Enter a session ID', 'error'); return; }
+    if (!gameDate(gameId)) { toast(`Start the session ID with its date, like ${localDate()}-BP`, 'error'); return; }
     const team = {
       name: String(f.get('t0_team')).trim() || chosen?.name || 'Team',
       pitcher: String(f.get('t0_pitcher')).trim(),
