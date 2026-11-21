@@ -120,6 +120,52 @@ export const isBp = (game) => game?.mode === 'bp';
 // "Next batter" reasons that make sense in live BP.
 export const BP_NEXT_REASONS = ['HBP', 'other'];
 
+// ---- Game IDs ----
+// Every game and live BP session ID starts with its date (YYYY-MM-DD), so the dashboard
+// can put them in order. Keep these two in sync with the copies in the dashboard.
+
+// The date at the start of a game ID, as 'YYYY-MM-DD', or null if there isn't a real one.
+export function gameDate(id) {
+  const m = /^\s*(\d{4})-(\d{2})-(\d{2})(?!\d)/.exec(String(id ?? ''));
+  if (!m) return null;
+  const [y, mo, d] = m.slice(1).map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return m.slice(1).join('-');
+}
+
+// Which game of the day an ID names, for doubleheaders: "GAME 2", "Game2", "gm1", "Gm. 1",
+// "G2", "game #2", "Spiel 2", "Sp2", "DH2", "BP 2", "2nd game", "game two". Null if none.
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, first: 1, second: 2, third: 3, fourth: 4, eins: 1, zwei: 2, drei: 3 };
+const GAME_WORD = '(?:games?|gm|g|spiel|sp|dh|bp)';
+const GAME_NUMBER_RES = [
+  // GAME 2, gm1, Gm.-#2, dh2, Spiel 2
+  new RegExp(`(?:^|[^a-z])${GAME_WORD}\\s*[-_.:#]*\\s*(\\d{1,2})(?!\\d)`, 'i'),
+  // game two, Spiel zwei
+  new RegExp(`(?:^|[^a-z])${GAME_WORD}\\s*[-_.:#]*\\s*(${Object.keys(NUMBER_WORDS).join('|')})(?![a-z])`, 'i'),
+  // 2nd game, 1. Spiel, second game
+  new RegExp(`(?:^|[^a-z0-9])(\\d{1,2}|${Object.keys(NUMBER_WORDS).join('|')})(?:st|nd|rd|th|\\.)?\\s*[-_]?\\s*(?:games?|gm|spiel)(?![a-z])`, 'i'),
+];
+export function gameNumber(id) {
+  // Drop the leading date so its digits never read as a game number.
+  const rest = String(id ?? '').replace(/^\s*\d{4}-\d{2}-\d{2}/, ' ');
+  for (const re of GAME_NUMBER_RES) {
+    const m = re.exec(rest);
+    if (m) {
+      const v = m[1].toLowerCase();
+      const n = NUMBER_WORDS[v] ?? Number(v);
+      if (n >= 1 && n <= 20) return n;
+    }
+  }
+  return null;
+}
+
+// Today's date in the device's own time zone (toISOString would give UTC's date after midnight).
+export function localDate(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function pitchResult(zone, action) {
   switch (action) {
     case 'TAKE': return zone === 'IN' ? 'called_strike' : 'ball';
