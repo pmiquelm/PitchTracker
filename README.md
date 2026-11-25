@@ -176,6 +176,33 @@ Live BP needs script version 6 or later: until the new script is deployed, rows 
   Add a filter `deleted = false`, and a filter control on `session_type` to show games, live BP or both.
   Add the **PlateAppearances** tab as a second source for results.
 
+### 8. Video timestamps (optional)
+
+If a game is on YouTube, every play in the **PlayByPlay** tab (plate appearances and plays between pitches:
+steals, wild pitches, pickoffs…) can get a link to its moment in the video. In the sheet, on a computer:
+**PitchTracker → Video timestamps** (the menu appears a few seconds after the sheet opens). A window opens with the
+video on the left and the game's plays on the right, in order.
+
+1. Pick the game and paste its YouTube link (kept in the **Videos** tab, so next time it's filled in).
+2. Play or skip to where the next play starts and press **Enter**. The highlighted play gets the video's current
+   time and the next one is highlighted.
+3. PlayByPlay's `video` column shows the time as a link (`41:12` opens YouTube at that moment).
+
+Keys: **Space** play / pause, **← →** 5 s, **J L** 10 s, **, .** 1 s, **↑ ↓** pick another play, **Backspace** clear
+its time. **Enter** on a play that has a time replaces it, and clicking one jumps the video there. If a video won't
+play in the window (some owners block it), keep it open on YouTube, right-click the video → *Copy video URL at
+current time*, and paste that into the box under the video: it fills the highlighted play the same way. A link to a
+different video (part 2 of a game) becomes the game's link.
+
+**Where the times live.** PlayByPlay is regenerated from the Scoresheets tab, so the times are kept in their own
+**VideoTimes** tab (game, event number, and the play's code and batter as a check). PlayByPlay's `video` column is
+a single formula in its header cell that looks each row up there, so regenerating the rows never loses a time.
+If a corrected game file moved the plays, a time whose play changed shows **⚠ check** in the sheet and ⚠ in the
+window: stamp it again. Don't clear PlayByPlay's `video` header cell. If it's lost, opening the window puts it back.
+
+The first time, Google asks you to approve the script again ("display content in the spreadsheet"). Do it as soon as
+the new script is deployed: until then Google may refuse uploads too (the phones keep everything and retry).
+
 ## Sheet columns
 
 **Pitches** (one row per pitch):
