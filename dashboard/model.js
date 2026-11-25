@@ -7,6 +7,7 @@
 // takes its plate appearances from the PlateAppearances tab and its pitches from Pitches.
 
 import { gameDate, gameNumber, PA_RESULTS } from '../js/game.js';
+import { rates as wpRates, model as wpModel, valuePlays, reTable } from './winprob.js';
 
 export const NO_TEAM = 'No team entered';
 
@@ -70,6 +71,7 @@ function pitchOf(p) {
     balls: num(p.balls_before),
     strikes: num(p.strikes_before),
     inPa: num(p.pitch_in_pa),
+    paEnd: text(p.pa_end), // 'strikeout' or 'walk' on the pitch that ended the plate appearance
   };
 }
 
@@ -95,6 +97,20 @@ export function buildModel(data) {
     list.sort((a, b) => (num(a.pitch_in_pa) ?? 0) - (num(b.pitch_in_pa) ?? 0) || (num(a.pitch_number) ?? 0) - (num(b.pitch_number) ?? 0));
   }
   const pitchesFor = (game, pa) => (pitchesByPa.get(`${game}|${text(pa)}`) || []).map(pitchOf);
+  // The pitch that ended a strikeout or walk carries pa_end; rows that lack it get it from the result.
+  const finish = (pitches, out) => {
+    const last = pitches[pitches.length - 1];
+    if (last && !pitches.some((q) => q.paEnd)) {
+      if (out === 'K' && ['called_strike', 'swinging_strike'].includes(last.result)) last.paEnd = 'strikeout';
+      if (out === 'BB' && last.result === 'ball') last.paEnd = 'walk';
+    }
+    return pitches;
+  };
+
+  // Run and win values for every scoresheet play (winprob.js).
+  const rateRows = wpRates(pbp, appPas);
+  const runModel = wpModel(rateRows);
+  const values = valuePlays(pbp, runModel);
 
   const plays = [];
   const pbpByGame = groupBy(pbp.filter((e) => text(e.game_id)), (e) => text(e.game_id));
@@ -120,6 +136,7 @@ export function buildModel(data) {
       const code = text(e.event_code);
       const t = videoAt.get(`${game}|${text(e.event_seq)}`);
       const out = isPa ? outcomeOf(code) : '';
+      finish(pitches, out);
       plays.push({
         game,
         seq: num(e.event_seq),
@@ -146,6 +163,7 @@ export function buildModel(data) {
         video: t && t.check === `${code}|${text(e.batter)}` ? t.sec : null,
         session: 'game',
         source: 'pbp',
+        wp: values.get(`${game}|${text(e.event_seq)}`) || null,
       });
     }
   }
@@ -157,7 +175,7 @@ export function buildModel(data) {
     for (const p of pas) {
       const code = text(p.result);
       const out = outcomeOf(code);
-      plays.push(appPlay(game, p, code, out, pitchesFor(game, p.pa_number)));
+      plays.push(appPlay(game, p, code, out, finish(pitchesFor(game, p.pa_number), out)));
     }
   }
   // Pitches whose plate appearance has no row (still going, or never finished): they count
@@ -169,7 +187,11 @@ export function buildModel(data) {
     plays.push(appPlay(game, list[0], '', '', list.map(pitchOf)));
   }
 
-  return { plays, games: buildGames(plays, videoLinks) };
+  return {
+    plays,
+    games: buildGames(plays, videoLinks),
+    runModel: { rates: rateRows, re: reTable(runModel, values) },
+  };
 }
 
 function appPlay(game, row, code, out, pitches) {
@@ -199,6 +221,7 @@ function appPlay(game, row, code, out, pitches) {
     video: null,
     session: text(row.session_type) === 'bp' ? 'bp' : 'game',
     source: 'app',
+    wp: null,
   };
 }
 

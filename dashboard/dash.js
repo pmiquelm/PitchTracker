@@ -10,6 +10,8 @@ import { PITCH_TYPES } from '../js/game.js';
 import {
   buildModel, outcomeCounts, arsenal, players, filterSession, OUTCOME_LABELS, NO_TEAM,
 } from './model.js';
+import { gamePlayers, gameTeams, OUTCOMES, RUNNING } from './winprob.js';
+import { BOARDS, leaderboards } from './leaders.js';
 
 const STORE = 'pt-dashboard';
 const PREFS = 'pt-dashboard-prefs';
@@ -23,7 +25,7 @@ let model = null;
 let loadedAt = 0;
 let loading = false;
 const ui = {
-  tab: 'games', session: 'game', game: null, hitter: null, pitcher: null, hitTeam: null, pitTeam: null, follow: true,
+  tab: 'games', session: 'game', game: null, hitter: null, pitcher: null, hitTeam: null, pitTeam: null, lbTeam: null, follow: true,
   ...readPrefs(),
 };
 let pendingSeek = null; // { game, sec } from a "Watch" button on another tab
@@ -56,20 +58,36 @@ function writeJson(key, value) {
 function readPrefs() {
   const p = readJson(PREFS) || {};
   const out = {};
-  if (['games', 'hitters', 'pitchers'].includes(p.tab)) out.tab = p.tab;
+  if (['games', 'hitters', 'pitchers', 'leaders'].includes(p.tab)) out.tab = p.tab;
   if (['game', 'bp', 'all'].includes(p.session)) out.session = p.session;
   if (typeof p.follow === 'boolean') out.follow = p.follow;
-  for (const k of ['hitTeam', 'pitTeam']) if (typeof p[k] === 'string') out[k] = p[k];
+  for (const k of ['hitTeam', 'pitTeam', 'lbTeam']) if (typeof p[k] === 'string') out[k] = p[k];
   return out;
 }
 function savePrefs() {
-  writeJson(PREFS, { tab: ui.tab, session: ui.session, follow: ui.follow, hitTeam: ui.hitTeam, pitTeam: ui.pitTeam });
+  writeJson(PREFS, { tab: ui.tab, session: ui.session, follow: ui.follow, hitTeam: ui.hitTeam, pitTeam: ui.pitTeam, lbTeam: ui.lbTeam });
 }
 
 const pct = (v) => (v === null || v === undefined ? '–' : `${Math.round(v * 100)}%`);
 const avg = (v) => (v === null || v === undefined ? '–' : v.toFixed(3).replace(/^0/, ''));
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const int = (v) => (v === null || v === undefined ? '–' : String(v));
+// Signed, with a real minus sign: +12.3, −4.0.
+const sgn = (v, n = 1) => (v === null || v === undefined || !Number.isFinite(v) ? '–'
+  : `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(n)}`);
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' })[n % 10] || 'th');
+const SVG = 'http://www.w3.org/2000/svg';
+function s(tag, attrs) {
+  const el = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+  return el;
+}
+
+// The team in the most games is most likely "us" (opponents change from game to game).
+function ourTeam(teams) {
+  const inGames = (t) => model.games.filter((g) => g.teams.includes(t)).length;
+  return teams.slice().sort((a, b) => inGames(b) - inGames(a))[0];
+}
 
 function fmtTime(sec) {
   const s = Math.floor(sec);
@@ -250,7 +268,7 @@ function setStatus(text, err = false) {
 
 function render() {
   destroyPlayer();
-  const tabs = [['games', 'Games'], ['hitters', 'Hitters'], ['pitchers', 'Pitchers']];
+  const tabs = [['games', 'Games'], ['hitters', 'Hitters'], ['pitchers', 'Pitchers'], ['leaders', 'Leaders']];
   const session = h('select', { 'aria-label': 'Sessions', onchange: (e) => { ui.session = e.target.value; ui.game = null; savePrefs(); render(); } },
     ...[['game', 'Games'], ['bp', 'Live BP'], ['all', 'Games and live BP']].map(([v, t]) => h('option', { value: v, selected: ui.session === v, text: t })));
   const header = h('header', { class: 'bar' },
@@ -265,14 +283,24 @@ function render() {
   const plays = filterSession(model.plays, ui.session);
   if (ui.tab === 'games') renderGames(main);
   else if (ui.tab === 'hitters') renderPeople(main, plays, 'batter');
-  else renderPeople(main, plays, 'pitcher');
+  else if (ui.tab === 'pitchers') renderPeople(main, plays, 'pitcher');
+  else renderLeaders(main, plays);
   const footer = h('footer', { class: 'foot' },
     h('span', { id: 'status', text: `Read from the sheet ${ago(loadedAt)}` }),
     h('span', { id: 'sheet', class: 'muted' }));
   root.replaceChildren(header, main, footer);
   sheetCode(conn.url).then((c) => { const el = document.getElementById('sheet'); if (el) el.textContent = `Sheet ${c}`; });
-  if (ui.tab === 'games') startPlayer();
+  if (ui.tab === 'games') { drawWpChart(); startPlayer(); }
 }
+
+let resizeFrame = 0;
+let lastWidth = window.innerWidth;
+window.addEventListener('resize', () => {
+  if (window.innerWidth === lastWidth) return; // phones fire resize when the toolbar hides
+  lastWidth = window.innerWidth;
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(() => { if (model && ui.tab === 'games') drawWpChart(); });
+});
 
 setInterval(() => { if (model && !loading && !document.getElementById('status')?.classList.contains('err')) setStatus(`Read from the sheet ${ago(loadedAt)}`); }, 30000);
 
@@ -318,8 +346,211 @@ function renderGames(main) {
     list.append(playRow(p, i));
   });
 
-  main.append(h('div', { class: 'game-grid' }, head, video,
+  const valued = game.plays.some((p) => p.wp);
+  main.append(h('div', { class: 'game-grid' }, head, video, valued ? wpSection(game) : null,
     h('section', { class: 'game-right' }, h('h2', { text: 'Every play' }), pitchKey(), list), boxScore(game)));
+  if (valued) main.append(bigPlays(game), whoMoved(game), modelDetails());
+}
+
+// ---------- win probability ----------
+
+// Whose chances the chart and sentence follow: our team if it played, else the home team.
+function wpSide(game) {
+  const us = ourTeam(model.games.flatMap((g) => g.teams));
+  return us && us === game.away && us !== game.home ? 'away' : 'home';
+}
+
+function wpSection(game) {
+  const plays = game.plays.filter((p) => p.wp);
+  const lede = h('p', { class: 'lede' });
+  if (game.score) {
+    const { away, home } = game.score;
+    if (away === home) lede.append(`It ended level at ${home}. `);
+    else lede.append(`${home > away ? game.home : game.away} won ${Math.max(home, away)}–${Math.min(home, away)}. `);
+  }
+  const big = plays.slice().sort((a, b) => Math.abs(b.wp.wpa) - Math.abs(a.wp.wpa))[0];
+  if (big) {
+    lede.append(`The biggest swing was ${big.batter || 'a play'} in the ${big.half === 'top' ? 'top' : 'bottom'} of the ${ordinal(big.inning)}: `,
+      big.video !== null ? h('button', { class: 'link', onclick: () => seek(big.video, true), text: big.desc }) : big.desc,
+      `, worth ${sgn(big.wp.wpa)} points to ${big.team}`);
+    const err = big.wp.wpa - big.wp.wpaClean;
+    if (big.wp.errorFielder && Math.abs(err) >= 0.05) {
+      lede.append(`. Made cleanly, it would have been worth ${sgn(big.wp.wpaClean)}, so the error by ${big.wp.errorFielder} alone was worth ${sgn(err)} to them.`);
+    } else lede.append('.');
+  }
+  const team = wpSide(game) === 'home' ? game.home : game.away;
+  return h('section', { class: 'wp' },
+    h('h2', { text: `Win probability${team ? `: ${team}` : ''}` }),
+    lede,
+    h('div', { class: 'chart', id: 'wp-chart' }),
+    h('p', { class: 'muted small', text: 'The chance of winning before and after every play, from the run model below. Point at the line to see the play; tap it to jump the video there.' }));
+}
+
+function drawWpChart() {
+  const el = document.getElementById('wp-chart');
+  const game = model.games.find((g) => g.id === ui.game);
+  if (!el || !game) return;
+  const plays = game.plays.filter((p) => p.wp);
+  const home = wpSide(game) === 'home';
+  const team = home ? game.home : game.away;
+  const val = (w) => 100 * (home ? w : 1 - w);
+  const pts = [{ i: 0, v: val(plays[0].wp.homeWeBefore), p: null }, ...plays.map((p, i) => ({ i: i + 1, v: val(p.wp.homeWeAfter), p }))];
+  const W = Math.max(280, el.clientWidth);
+  const H = 220;
+  const m = { t: 14, r: 12, b: 24, l: 40 };
+  const x = (i) => m.l + (i / plays.length) * (W - m.l - m.r);
+  const y = (v) => m.t + (1 - v / 100) * (H - m.t - m.b);
+  const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img',
+    'aria-label': `Chance that ${team} win, after each of the ${plays.length} plays` });
+  // Inning starts
+  const starts = [];
+  plays.forEach((p, i) => { if (p.half === 'top' && (i === 0 || plays[i - 1].inning !== p.inning)) starts.push({ i, inning: p.inning }); });
+  starts.forEach((st, k) => {
+    svg.append(s('line', { x1: x(st.i), x2: x(st.i), y1: m.t, y2: H - m.b, class: 'grid' }));
+    if (W >= 420 || k % 2 === 0) { const t = s('text', { x: x(st.i) + 3, y: H - 7, class: 'axis' }); t.textContent = `Inn ${st.inning}`; svg.append(t); }
+  });
+  for (const v of [0, 25, 50, 75, 100]) {
+    const t = s('text', { x: m.l - 6, y: y(v) + 4, class: 'axis', 'text-anchor': 'end' });
+    t.textContent = `${v}%`;
+    svg.append(t);
+  }
+  svg.append(s('line', { x1: m.l, x2: W - m.r, y1: y(50), y2: y(50), class: 'ref' }));
+  svg.append(s('path', { d: pts.map((q, k) => `${k ? 'L' : 'M'}${x(q.i).toFixed(1)},${y(q.v).toFixed(1)}`).join(''), class: 'line' }));
+  const lastPt = pts[pts.length - 1];
+  const end = s('text', { x: W - m.r - 8, y: lastPt.v > 50 ? y(lastPt.v) + 18 : y(lastPt.v) - 10, 'text-anchor': 'end', class: 'end' });
+  end.textContent = `${team} ${Math.round(lastPt.v)}%`;
+  svg.append(end);
+  const dot = s('circle', { r: 4, class: 'dot', visibility: 'hidden' });
+  svg.append(dot);
+  const hit = s('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' });
+  svg.append(hit);
+  const tip = h('div', { class: 'tip', hidden: true });
+  const at = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const mx = ((ev.clientX - r.left) / r.width) * W;
+    const i = Math.max(1, Math.min(plays.length, Math.round(((mx - m.l) / (W - m.l - m.r)) * plays.length)));
+    return { q: pts[i], scale: r.width / W };
+  };
+  const show = (ev) => {
+    const { q, scale } = at(ev);
+    const p = q.p;
+    dot.setAttribute('cx', x(q.i));
+    dot.setAttribute('cy', y(q.v));
+    dot.setAttribute('visibility', 'visible');
+    tip.replaceChildren(...[
+      h('div', { class: 'tip-h', text: `${halfName(p)} · ${p.batter || ''}` }),
+      h('div', { text: p.desc }),
+      p.pitches.length ? h('div', {}, pitchTiles(p.pitches)) : null,
+      h('div', { class: 'muted', text: `${team} ${Math.round(q.v)}% · WPA ${sgn(p.wp.wpa)} for ${p.team} · leverage ${(p.wp.li ?? 0).toFixed(1)}` }),
+      p.video !== null ? h('div', { class: 'tip-v', text: `▶ Tap to play from ${fmtTime(p.video)}` }) : null,
+    ].filter(Boolean));
+    tip.hidden = false;
+    const left = Math.min(x(q.i) * scale + 12, el.clientWidth - 250);
+    tip.style.left = `${Math.max(0, left)}px`;
+    tip.style.top = `${Math.max(0, y(q.v) * scale - 90)}px`;
+  };
+  hit.addEventListener('pointermove', show);
+  hit.addEventListener('pointerdown', show);
+  hit.addEventListener('pointerleave', () => { tip.hidden = true; dot.setAttribute('visibility', 'hidden'); });
+  hit.addEventListener('click', (ev) => { const { q } = at(ev); if (q.p.video !== null) seek(q.p.video, true); });
+  if (plays.some((p) => p.video !== null)) hit.style.cursor = 'pointer';
+  el.replaceChildren(svg, tip);
+}
+
+function wpaCell(v) {
+  return h('td', { class: v > 0.05 ? 'pos' : v < -0.05 ? 'neg' : '', text: sgn(v) });
+}
+
+function bigPlays(game) {
+  const rows = game.plays.filter((p) => p.wp).sort((a, b) => Math.abs(b.wp.wpa) - Math.abs(a.wp.wpa)).slice(0, 8);
+  return h('section', { id: 'big-plays' }, h('h2', { text: 'Biggest plays' }),
+    h('p', { class: 'muted small', text: 'The eight plays that moved the chance of winning the most. WPA is win probability added for the batting team, in percentage points. Leverage 1 is an average plate appearance; 2 is twice as tense.' }),
+    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+      h('thead', {}, h('tr', {}, ...['Play', 'Inning', 'Batter', 'Score before', 'Pitches', 'Leverage', 'WPA', 'Error by'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, ...rows.map((p) => h('tr', {},
+        h('th', { class: 'wrap' }, p.video !== null ? h('button', { class: 'link', title: `Play from ${fmtTime(p.video)}`, onclick: () => seek(p.video, true), text: `▶ ${p.desc}` }) : p.desc),
+        h('td', { text: halfName(p) }), h('td', { class: 'left', text: p.batter }),
+        h('td', { text: p.awayBefore !== null ? `${p.awayBefore}–${p.homeBefore}` : '' }),
+        h('td', {}, pitchTiles(p.pitches)), h('td', { text: (p.wp.li ?? 0).toFixed(1) }), wpaCell(p.wp.wpa),
+        h('td', { class: 'left', text: p.wp.errorFielder })))))));
+}
+
+function whoMoved(game) {
+  const ps = gamePlayers(game.plays);
+  const teams = gameTeams(game.plays);
+  const opt = (v, n = 1) => (v === null ? '' : sgn(v, n));
+  return h('section', { id: 'game-players' }, h('h2', { text: 'Who moved the game' }),
+    h('p', { class: 'muted small', text: 'Win probability added in percentage points, signed so that good for the player is positive, with the net in runs (RE24) too. A plate appearance is shared by hitter and pitcher as if any error had not happened, and a dropped third strike counts as a strikeout. The error, passed ball or wild pitch is charged to whoever made it. Steals, caught stealing and pickoffs go to the runner, and on defense half to the pitcher and half to the catcher (or the fielder who made the pickoff).' }),
+    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+      h('thead', {}, h('tr', {}, ...['Player', 'Team', 'Roles', 'PA', 'Avg leverage', 'Hitting', 'Running', 'Pitching', 'Fielding', 'Errors', 'Net WPA', 'Net runs'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, ...ps.map((r) => h('tr', {},
+        h('th', { text: r.who }), h('td', { class: 'left', text: r.team }), h('td', { class: 'left', text: r.roles }),
+        h('td', { text: r.pa ?? '' }), h('td', { text: r.avgLi === null ? '' : r.avgLi.toFixed(1) }),
+        h('td', { text: opt(r.hit) }), h('td', { text: opt(r.run) }), h('td', { text: opt(r.pit) }), h('td', { text: opt(r.fld) }),
+        h('td', { text: r.e ?? '' }), wpaCell(r.wpa), h('td', { text: sgn(r.re24, 2) })))))),
+    h('h3', { id: 'team-totals', text: 'Team totals' }),
+    h('p', { class: 'muted small', text: "Every play's value, in percentage points of win probability, split by who it went to. Batting adds up to hitters, runners and what the other team gave away; fielding to pitchers and fielders, and equals the other team's batting with the sign flipped." }),
+    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+      h('thead', {}, h('tr', {}, ...['Team', 'Hitters', 'Runners', 'Given away', 'Batting', 'Batting, runs', 'Pitchers', 'Fielders', 'Fielding', 'Fielding, runs'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, ...teams.map((r) => h('tr', {},
+        h('th', { text: r.team }), ...[r.hit, r.run, r.given, r.bat].map((v) => h('td', { text: sgn(v) })), h('td', { text: sgn(r.batRuns, 2) }),
+        ...[r.pit, r.fielders, r.fld].map((v) => h('td', { text: sgn(v) })), h('td', { text: sgn(r.fldRuns, 2) })))))));
+}
+
+function modelDetails() {
+  const { rates, re } = model.runModel;
+  const short = { out: 'Out', walk: 'BB/HBP', single: '1B', double: '2B', triple: '3B', hr: 'HR', dp: 'DP', adv: 'WP/PB/BK', steal: 'SB', caught: 'CS/PO' };
+  const p1 = (v) => (v === null ? '–' : `${(100 * v).toFixed(1)}%`);
+  const d2 = (v) => (v === null ? '–' : v.toFixed(2));
+  return h('details', { class: 'model', id: 'run-model' }, h('summary', { text: 'How the win probability is worked out' }),
+    h('p', { class: 'small', text: 'The model plays out a half-inning one event at a time: a plate appearance, or with runners on, a wild pitch, passed ball or balk (every runner moves up), a steal, or a runner caught stealing or picked off. On a single a runner from 2nd scores and one from 1st stops at 2nd; on a double a runner from 1st stops at 3rd. Some outs with a runner on 1st and fewer than two outs are double plays. Games are 7 innings, with the run rule (20 after 3, 15 after 4, 10 after 5 and 6) and extra innings starting with runners on 1st and 2nd. The rates come from this league\'s games, blended with typical rates worth 50 plate appearances (or 50 chances) so a small sample doesn\'t swing the model.' }),
+    h('h3', { text: 'Run expectancy' }),
+    h('p', { class: 'muted small', text: 'Runs expected from each base and out state to the end of the half-inning. Observed is what actually followed in the play-by-play, which stays noisy until many more games are in.' }),
+    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+      h('thead', {}, h('tr', {}, ...['Bases', '0 outs', '1 out', '2 outs', 'Observed, 0 outs', 'Times', 'Observed, 1 out', 'Times', 'Observed, 2 outs', 'Times'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, ...re.map((r) => h('tr', {}, h('th', { class: 'mono', text: r.bases }), ...r.re.map((v) => h('td', { text: d2(v) })),
+        ...[0, 1, 2].flatMap((o) => [h('td', { class: r.n[o] < 5 ? 'faint' : '', text: d2(r.obs[o]) }), h('td', { class: r.n[o] < 5 ? 'faint' : '', text: String(r.n[o]) })])))))),
+    h('h3', { text: 'Outcome and base-running rates' }),
+    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+      h('thead', {}, h('tr', {}, ...['Outcome', 'Times', 'Out of', 'Counted over', 'Observed', 'Typical', 'Used by the model'].map((t) => h('th', { text: t })))),
+      h('tbody', {}, ...rates.map((r) => h('tr', {}, h('th', { title: r.label, text: short[r.outcome] || r.outcome }),
+        h('td', { text: String(r.count) }), h('td', { text: String(r.chances) }), h('td', { class: 'left', text: r.per }),
+        h('td', { text: p1(r.observed) }), h('td', { text: p1(r.prior) }), h('td', { text: p1(r.rate) })))))),
+    h('p', { class: 'muted small', text: `Outcomes: ${OUTCOMES.map((o) => `${short[o.outcome]} = ${o.label}`).join('; ')}; ${RUNNING.map((o) => `${short[o.outcome]} = ${o.label}`).join('; ')}.` }));
+}
+
+// ---------- leaderboards ----------
+
+function renderLeaders(main, plays) {
+  const teams = [...new Set(plays.flatMap((p) => [p.team, p.opp]))].filter((t) => t !== NO_TEAM);
+  if (!plays.length || !teams.length) { main.append(empty('Nothing to rank in this selection yet.')); return; }
+  if (!teams.includes(ui.lbTeam)) ui.lbTeam = ourTeam(teams);
+  main.append(h('div', { class: 'controls' },
+    h('select', { 'aria-label': 'Team', onchange: (e) => { ui.lbTeam = e.target.value; savePrefs(); render(); } },
+      ...teams.map((t) => h('option', { value: t, selected: t === ui.lbTeam, text: t })))),
+  h('p', { class: 'muted small', text: "Top 5 on each board. Streaks carry over from one game to the next in date order (GAME 1 before GAME 2 on the same day); active means it's still going. Ties share a rank." }));
+  for (const [side, title, role] of [['hit', 'Hitters', 'batter'], ['pit', 'Pitchers', 'pitcher']]) {
+    const boards = leaderboards(plays, model.games, side, ui.lbTeam);
+    main.append(h('h2', { class: 'lb-side', text: `${ui.lbTeam} ${title.toLowerCase()}` }));
+    for (const good of [true, false]) {
+      main.append(h('h3', { class: `lb-h ${good ? 'good' : 'bad'}`, text: good ? 'The good' : 'The bad' }),
+        h('div', { class: 'lb-grid' }, ...BOARDS[side].filter((b) => b.good === good).map((b) => board(b, boards[b.id] || [], role))));
+    }
+  }
+}
+
+function board(b, rows, role) {
+  const fmt = (v) => (b.fmt === 'pct' ? `${v}%` : b.fmt === 'dec' ? Number(v).toFixed(1) : String(v));
+  return h('section', { class: 'lb', id: `lb-${b.id}` }, h('h4', { text: b.title }), b.note ? h('p', { class: 'muted small', text: b.note }) : null,
+    h('table', { class: 'lb-t' },
+      h('thead', {}, h('tr', {}, h('th', { text: '#' }), h('th', { text: 'Name' }), h('th', { text: b.unit }))),
+      h('tbody', {}, ...(rows.length ? rows.map((r) => h('tr', { class: r.rank === 1 ? 'first' : '' },
+        h('td', { class: 'rank', text: String(r.rank) }),
+        h('td', {}, h('button', { class: 'link', onclick: () => openPerson(role, { key: `${ui.lbTeam}\u0000${r.who}`, team: ui.lbTeam, name: r.who }), text: r.who }),
+          r.active ? h('span', { class: 'active', title: 'Still going: their latest chance kept it alive', text: 'active' }) : null,
+          r.detail ? h('small', { text: r.detail }) : null),
+        h('td', { class: 'val', text: fmt(r.value) })))
+        : [h('tr', {}, h('td', { colspan: 3, class: 'muted', text: 'Nobody yet' }))]))));
 }
 
 function playRow(p, i) {
@@ -335,7 +566,9 @@ function playRow(p, i) {
   h('span', { class: 'who' },
     h('strong', { text: p.isPa ? p.batter || 'Batter' : p.desc || p.code }),
     p.isPa ? h('span', { class: 'desc', text: p.desc }) : null,
-    p.pitcher && p.isPa ? h('span', { class: 'muted small', text: `vs ${p.pitcher}` }) : null),
+    p.pitcher && p.isPa ? h('span', { class: 'muted small', text: `vs ${p.pitcher}` }) : null,
+    p.wp ? h('span', { class: 'muted small' }, 'WPA ', h('span', { class: p.wp.wpa > 0.05 ? 'pos' : p.wp.wpa < -0.05 ? 'neg' : '', text: sgn(p.wp.wpa) }),
+      ` for ${p.team} · leverage ${(p.wp.li ?? 0).toFixed(1)}`) : null),
   pitchTiles(p.pitches));
   return row;
 }
@@ -501,11 +734,7 @@ function renderPeople(main, plays, role) {
   const teams = [...new Set(all.map((p) => p.team))];
   const teamKey = batter ? 'hitTeam' : 'pitTeam';
   const personKey = batter ? 'hitter' : 'pitcher';
-  if (!teams.includes(ui[teamKey])) {
-    // The team in the most games is most likely "us" (opponents change from game to game).
-    const inGames = (t) => model.games.filter((g) => g.teams.includes(t)).length;
-    ui[teamKey] = teams.slice().sort((a, b) => inGames(b) - inGames(a))[0];
-  }
+  if (!teams.includes(ui[teamKey])) ui[teamKey] = ourTeam(teams);
   const roster = all.filter((p) => p.team === ui[teamKey]);
   if (!roster.some((p) => p.key === ui[personKey])) ui[personKey] = roster[0].key;
   const person = roster.find((p) => p.key === ui[personKey]);

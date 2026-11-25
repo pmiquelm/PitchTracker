@@ -1,4 +1,6 @@
 :root {
+  --pos: #1f7a4d;
+  --neg: #c5221f;
   --bg: #f3f5f2;
   --surface: #ffffff;
   --text: #111a15;
@@ -38,6 +40,8 @@
     --onbase: #5cc394;
     --out: #6c7a72;
     --k: #ff6b5e;
+    --pos: #3fae76;
+    --neg: #ff6b5e;
   }
 }
 
@@ -115,13 +119,14 @@ button.icon { background: transparent; color: inherit; border-color: rgba(255, 2
 /* ---- games ----
    Phone: title, video, plays, box score, one under the other.
    Wide: the plays on the right, beside the video and box score. */
-.game-grid { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "video" "plays" "box"; }
+.game-grid { display: grid; gap: 0 16px; grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "video" "wp" "plays" "box"; }
+.wp { grid-area: wp; }
 .game-head { grid-area: head; }
 .video-wrap, .no-video { grid-area: video; }
 .game-right { grid-area: plays; }
 .box { grid-area: box; }
 @media (min-width: 900px) {
-  .game-grid { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); grid-template-areas: "head plays" "video plays" "box plays"; grid-template-rows: auto auto 1fr; }
+  .game-grid { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); grid-template-areas: "head plays" "video plays" "wp plays" "box plays"; grid-template-rows: auto auto auto 1fr; }
   .game-right { position: sticky; top: 64px; align-self: start; }
   .game-right h2 { margin-top: 0; }
   .game-right .plays { max-height: calc(100vh - 140px); overflow: auto; }
@@ -215,3 +220,52 @@ table.stats { border-collapse: collapse; width: 100%; font-variant-numeric: tabu
 .meter.o-K { background: var(--k); }
 .bar-v { text-align: right; font-variant-numeric: tabular-nums; }
 .pa-game + .pa-game { border-top: 1px solid var(--line); }
+
+/* ---- win probability ---- */
+.lede { margin: 0 0 8px; }
+.chart { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 4px 0; }
+.chart svg { display: block; touch-action: pan-y; }
+.chart .grid { stroke: var(--line); }
+.chart .ref { stroke: var(--muted); stroke-dasharray: 3 3; opacity: .6; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart .dot { fill: var(--accent); }
+.chart .end { fill: var(--text); font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
+.tip {
+  position: absolute; z-index: 2; max-width: 250px; pointer-events: none;
+  padding: 8px 10px; font-size: .8rem; line-height: 1.35;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0, 0, 0, .15);
+}
+.tip[hidden] { display: none; }
+.tip .tiles { justify-content: flex-start; margin: 3px 0; }
+.tip-h { font-weight: 600; }
+.tip-v { color: var(--accent); }
+.pos { color: var(--pos); }
+.neg { color: var(--neg); }
+.stats th.wrap { white-space: normal; min-width: 180px; max-width: 280px; }
+.stats td.left { text-align: left; }
+.stats .mono { font-family: ui-monospace, monospace; }
+.stats .faint { color: var(--muted); opacity: .7; }
+.stats .tiles { justify-content: flex-start; flex-wrap: nowrap; }
+h3 { font-size: .95rem; margin: 18px 0 6px; }
+details.model { margin: 22px 0 8px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+details.model summary { cursor: pointer; font-weight: 600; }
+
+/* ---- leaderboards ---- */
+.lb-side { margin-top: 26px; }
+.lb-h { font-size: .9rem; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 8px; }
+.lb-h.good { color: var(--pos); }
+.lb-h.bad { color: var(--neg); }
+.lb-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.lb { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.lb h4 { margin: 0; font-size: .92rem; }
+.lb > p { margin: 2px 0 6px; }
+.lb-t { width: 100%; border-collapse: collapse; font-size: .88rem; font-variant-numeric: tabular-nums; }
+.lb-t th { font-size: .72rem; color: var(--muted); font-weight: 600; text-align: left; padding: 2px 4px; }
+.lb-t th:last-child, .lb-t .val { text-align: right; }
+.lb-t td { padding: 4px; border-top: 1px solid var(--line); vertical-align: top; }
+.lb-t .rank { width: 20px; color: var(--muted); }
+.lb-t tr.first .val, .lb-t tr.first .rank { font-weight: 700; color: var(--text); }
+.lb-t small { display: block; color: var(--muted); font-size: .74rem; }
+.lb-t .val { white-space: nowrap; font-weight: 600; }
+.active { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .68rem; font-weight: 600; color: #fff; background: var(--accent); vertical-align: 1px; }

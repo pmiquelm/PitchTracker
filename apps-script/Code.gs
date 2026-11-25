@@ -311,7 +311,7 @@ function json(obj) {
 const VIEW_KEY_PROPERTY = 'VIEW_KEY';
 const DASH_PITCH_COLUMNS = ['game_id', 'inning', 'half', 'batting_team', 'pitching_team', 'pa_number',
   'pitch_number', 'pitch_in_pa', 'batter', 'pitcher', 'balls_before', 'strikes_before', 'pitch_type',
-  'zone', 'action', 'result', 'session_type'];
+  'zone', 'action', 'result', 'pa_end', 'session_type'];
 const DASH_PA_COLUMNS = ['game_id', 'inning', 'half', 'batting_team', 'pitching_team', 'pa_number',
   'batter', 'pitcher', 'pitches', 'result', 'result_label', 'category', 'session_type'];
 const DASH_VIDEO_TIME_COLUMNS = ['game_id', 'event_seq', 'event_code', 'batter', 'seconds'];
