@@ -88,25 +88,28 @@ h2 { font-size: 1.05rem; margin: 22px 0 8px; }
 .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 .sheet-code { font: 700 1.8rem ui-monospace, monospace; letter-spacing: .08em; margin: 4px 0 12px; }
 
-/* ---- header ---- */
+/* ---- header ----
+   Row 1: the name, then the sessions menu and refresh, always side by side.
+   Row 2 (narrow screens): the tabs. On wide screens the tabs sit between them. */
 .bar {
   position: sticky; top: 0; z-index: 5;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "brand tabs tools"; align-items: center; gap: 6px 12px;
   padding: 8px 16px; padding-top: max(8px, env(safe-area-inset-top));
   background: var(--brand); color: var(--brand-text);
 }
-.brand { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.brand { grid-area: brand; display: flex; align-items: center; gap: 8px; font-weight: 700; min-width: 0; white-space: nowrap; }
 .brand img { border-radius: 6px; }
-.tabs { display: flex; gap: 4px; flex: 1; }
-.tabs button { background: transparent; border: 0; color: inherit; opacity: .75; padding: 6px 10px; border-radius: 8px; }
+.tabs { grid-area: tabs; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { background: transparent; border: 0; color: inherit; opacity: .75; padding: 6px 10px; border-radius: 8px; white-space: nowrap; }
 .tabs button.on { opacity: 1; background: rgba(255, 255, 255, .16); font-weight: 600; }
-.tools { display: flex; gap: 6px; align-items: center; }
-.tools select { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .25); color: inherit; }
+.tools { grid-area: tools; display: flex; gap: 6px; align-items: center; justify-self: end; }
+.tools select { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .25); color: inherit; padding: 5px 8px; }
 .tools select option { color: var(--text); background: var(--surface); }
 button.icon { background: transparent; color: inherit; border-color: rgba(255, 255, 255, .3); padding: 5px 10px; }
-@media (max-width: 560px) {
-  .tabs { order: 3; flex-basis: 100%; }
-  .tools { margin-left: auto; }
+@media (max-width: 720px) {
+  .bar { grid-template-columns: 1fr auto; grid-template-areas: "brand tools" "tabs tabs"; }
+  .tabs button { padding: 6px 8px; }
 }
 
 .page { max-width: 1240px; margin: 0 auto; padding: 12px 16px 24px; }
@@ -127,7 +130,7 @@ button.icon { background: transparent; color: inherit; border-color: rgba(255, 2
 .box { grid-area: box; }
 @media (min-width: 900px) {
   .game-grid { grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); grid-template-areas: "head plays" "video plays" "wp plays" "box plays"; grid-template-rows: auto auto auto 1fr; }
-  .game-right { position: sticky; top: 64px; align-self: start; }
+  .game-right { position: sticky; top: calc(var(--head-h, 56px) + 8px); align-self: start; }
   .game-right h2 { margin-top: 0; }
   .game-right .plays { max-height: calc(100vh - 140px); overflow: auto; }
 }
@@ -141,9 +144,8 @@ button.icon { background: transparent; color: inherit; border-color: rgba(255, 2
 .video-msg a { color: #8ab4f8; }
 /* On a phone the video stays at the top while the list of plays scrolls under it. */
 @media (max-width: 899px) {
-  .video-wrap { position: sticky; top: 94px; z-index: 3; background: var(--bg); padding-bottom: 6px; }
+  .video-wrap { position: sticky; top: var(--head-h, 96px); z-index: 3; background: var(--bg); padding-bottom: 6px; }
 }
-@media (max-width: 899px) and (min-width: 561px) { .video-wrap { top: 52px; } }
 .follow { display: block; margin-top: 6px; font-size: .85rem; color: var(--muted); }
 .no-video { margin: 10px 0; }
 
@@ -269,3 +271,48 @@ details.model summary { cursor: pointer; font-weight: 600; }
 .lb-t small { display: block; color: var(--muted); font-size: .74rem; }
 .lb-t .val { white-space: nowrap; font-weight: 600; }
 .active { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .68rem; font-weight: 600; color: #fff; background: var(--accent); vertical-align: 1px; }
+
+/* ---- hitters and pitchers ---- */
+.kpi.thin .kpi-v { opacity: .6; }
+.kpi-t { font-size: .75rem; font-weight: 600; color: var(--muted); margin-top: 2px; }
+.kpi-t.up { color: var(--pos); }
+.kpi-t.down { color: var(--neg); }
+.trends { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.trend { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px 4px; min-width: 0; }
+.trend h3 { margin: 0; }
+.trend p { margin: 2px 0 4px; }
+.chart-box svg { display: block; }
+.chart-box .grid, .chart .grid { stroke: var(--line); }
+.chart-box .ref { stroke: var(--muted); stroke-dasharray: 4 3; stroke-width: 1.5; }
+.chart-box .axis { fill: var(--muted); font-size: 11px; }
+.chart-box .line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart-box .line.team { stroke: var(--muted); stroke-width: 1.5; opacity: .55; }
+.chart-box .pt { fill: var(--accent); stroke: var(--accent); stroke-width: 2; }
+.chart-box .pt-FB { fill: var(--fb); stroke: var(--fb); stroke-width: 1.5; }
+.chart-box .pt-CB { fill: var(--cb); stroke: var(--cb); stroke-width: 1.5; }
+.chart-box .hollow { fill: var(--surface); }
+.chart-box .track { stroke: var(--line); }
+.chart-box .name { fill: var(--accent); font-size: 12px; font-weight: 600; cursor: pointer; }
+.chart-box .name.on { fill: var(--text); }
+.chart-box .val { fill: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chart-box .faint { opacity: .55; }
+.chart-box .sel-row { fill: var(--accent-soft); }
+.cmp { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.chip { padding: 4px 10px; border-radius: 999px; font-size: .85rem; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.stats th.sort { cursor: pointer; user-select: none; }
+.stats th.sort.asc::after { content: ' ▲'; font-size: .7em; }
+.stats th.sort.desc::after { content: ' ▼'; font-size: .7em; }
+.stats tfoot th, .stats tfoot td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: 0; }
+.count-grid { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 520px; }
+.count { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.count.none { opacity: .5; }
+.count-l { font: 700 .8rem ui-monospace, monospace; color: var(--muted); }
+.count-v { font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mix { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--accent-soft); margin-top: 4px; }
+.mix .seg { display: block; height: 100%; }
+.mix .seg.t-FB { background: var(--fb); }
+.mix .seg.t-CB { background: var(--cb); }
+/* On a phone the page itself scrolls under the header and video: inning headers don't stick there. */
+@media (max-width: 899px) { .plays .half, .pa-list .half { position: static; } }

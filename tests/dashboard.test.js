@@ -1,7 +1,7 @@
 // The team dashboard's numbers (dashboard/model.js), from data shaped like the script sends it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts } from '../dashboard/model.js';
+import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, matchups } from '../dashboard/model.js';
 
 const tab = (cols, rows) => ({ cols, rows: rows.map((r) => cols.map((c) => r[c] ?? '')) });
 const PBP_COLS = ['game_id', 'date', 'event_seq', 'inning', 'half', 'batting_team', 'fielding_team', 'batter', 'pitcher',
@@ -127,4 +127,43 @@ test('game titles drop the date', () => {
 test('an empty sheet gives an empty dashboard', () => {
   const m = buildModel({ pbp: { cols: [], rows: [] }, pas: { cols: [], rows: [] }, pitches: { cols: [], rows: [] }, videoTimes: { cols: [], rows: [] }, videos: {} });
   assert.deepEqual([m.plays, m.games], [[], []]);
+});
+
+test('plate-appearance rates: quality at-bats, 1-1 strikes, putaways, quick outs, leadoff retired', () => {
+  const q = (balls, strikes, action, result, extra = {}) => ({ type: 'FB', zone: 'IN', action, result, balls, strikes, inPa: null, paEnd: '', ...extra });
+  const pa = (outcome, pitches, extra = {}) => ({ game: 'g', seq: 1, isPa: true, outcome, ab: !['BB'].includes(outcome), hit: outcome === '1B',
+    bases: outcome === '1B' ? 1 : 0, rbi: 0, pitches, ...extra });
+  const plays = [
+    // 6 pitches: a quality at-bat even though it's an out; reached 2 strikes, not a putaway
+    pa('OUT', [q(0, 0, 'TAKE', 'ball'), q(1, 0, 'TAKE', 'called_strike'), q(1, 1, 'FOUL', 'foul'), q(1, 2, 'TAKE', 'ball'), q(2, 2, 'TAKE', 'ball'), q(3, 2, 'IN_PLAY', 'in_play')], { leadoff: true }),
+    // two 2-strike fouls: quality; strikeout = putaway
+    pa('K', [q(0, 0, 'SWING', 'swinging_strike'), q(0, 1, 'SWING', 'swinging_strike'), q(0, 2, 'FOUL', 'foul'), q(0, 2, 'FOUL', 'foul'), q(0, 2, 'SWING', 'swinging_strike', { paEnd: 'strikeout' })]),
+    // a walk: quality; out in 3 or fewer it isn't
+    pa('BB', [q(0, 0, 'TAKE', 'ball'), q(1, 0, 'TAKE', 'ball'), q(2, 0, 'TAKE', 'ball'), q(3, 0, 'TAKE', 'ball', { paEnd: 'walk' })], { leadoff: true }),
+    // a quick out, first pitch
+    pa('OUT', [q(0, 0, 'IN_PLAY', 'in_play')]),
+    // a plate appearance with no pitches recorded counts for results only
+    pa('1B', []),
+  ];
+  const s = line(plays);
+  assert.deepEqual([s.pa, s.tracked, s.qab, s.qabPct], [5, 4, 3, 0.75]);
+  assert.deepEqual([s.ooPitches, s.ooStrikes], [1, 1], 'one pitch thrown at 1-1, a foul');
+  assert.deepEqual([s.twokPas, s.putaways], [2, 1]);
+  assert.deepEqual([s.quickOuts, s.leadoffs, s.leadoffOuts], [1, 2, 1]);
+  assert.deepEqual([s.threeBall, s.pitch.freezes, s.pitch.twokSwings, s.pitch.twokWhiffs], [2, 0, 4, 1]);
+  assert.equal(s.pitch.byType.FB.pitches, 16);
+});
+
+test('game by game in date order, the count grid and matchups', () => {
+  const m = buildModel(sample());
+  const rows = byGame(m.plays, m.games);
+  assert.deepEqual(rows.map((r) => [r.label, r.line.pa]), [['04/11 G2', 5], ['05/01', 1]]);
+  const grid = countGrid(m.plays.flatMap((p) => p.pitches));
+  assert.equal(grid.length, 12);
+  const first = grid.find((c) => c.balls === 0 && c.strikes === 0);
+  assert.deepEqual([first.pitches, first.swingPct], [4, 0.5], "a ball in play and a foul at 0-0");
+  const mu = matchups(filterSession(m.plays, 'game'));
+  assert.deepEqual(mu.map((r) => [r.pitcher, r.batter, r.line.pa]).slice(0, 2), [['Ace', 'Leidinger Max', 1], ['Ace', 'Tournoux Syan', 1]]);
+  assert.equal(m.plays.find((p) => p.seq === 1 && p.half === 'top').leadoff, true);
+  assert.equal(m.plays.find((p) => p.seq === 5).leadoff, true, 'first of the bottom half');
 });

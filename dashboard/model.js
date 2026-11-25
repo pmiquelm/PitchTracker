@@ -187,6 +187,16 @@ export function buildModel(data) {
     plays.push(appPlay(game, list[0], '', '', list.map(pitchOf)));
   }
 
+  // The first plate appearance of each half-inning (games only: live BP has no innings).
+  const firstOfHalf = new Map();
+  for (const p of plays) {
+    if (!p.isPa || p.session !== 'game' || !p.half || p.inning === null) continue;
+    const k = `${p.game}|${p.inning}|${p.half}`;
+    const cur = firstOfHalf.get(k);
+    if (!cur || (p.source === 'app' && p.seq < cur.seq)) firstOfHalf.set(k, p);
+  }
+  for (const p of firstOfHalf.values()) p.leadoff = true;
+
   return {
     plays,
     games: buildGames(plays, videoLinks),
@@ -283,38 +293,71 @@ export function gameTitle(id) {
 const SWINGS = ['SWING', 'FOUL', 'IN_PLAY'];
 const ratio = (a, b) => (b > 0 ? a / b : null);
 
-export function pitchNumbers(pitches) {
-  const n = { pitches: 0, balls: 0, inZone: 0, outZone: 0, swings: 0, whiffs: 0, called: 0, chases: 0, first: 0, firstStrikes: 0 };
+const isSwing = (p) => SWINGS.includes(p.action);
+// A freeze: strike three called, no swing (a strikeout looking). Freeze rate divides by 2-strike
+// pitches in the zone: the strikes a batter could have swung at with two strikes.
+export const frozen = (p) => p.result === 'called_strike' && (p.paEnd === 'strikeout' || p.strikes === 2);
+const twoK = (p) => (p.strikes === 2 && p.zone === 'IN') || frozen(p);
+export const TYPES = ['FB', 'CB'];
+
+// Counts and rates over a list of pitches, as the claude.ai dashboard works them out. `byType`
+// holds the same for each pitch type.
+export function pitchNumbers(pitches, withTypes = true) {
+  const n = { pitches: 0, balls: 0, inZone: 0, outZone: 0, swings: 0, zSwings: 0, whiffs: 0, called: 0, chases: 0,
+    first: 0, firstStrikes: 0, firstSwings: 0, twokSwings: 0, twokWhiffs: 0, twok: 0, freezes: 0 };
   for (const p of pitches) {
     n.pitches++;
     const ball = p.result === 'ball';
+    const sw = isSwing(p);
     if (ball) n.balls++;
-    if (p.zone === 'IN') n.inZone++;
-    if (p.zone === 'OUT') n.outZone++;
-    const swing = SWINGS.includes(p.action);
-    if (swing) n.swings++;
+    if (p.zone === 'IN') { n.inZone++; if (sw) n.zSwings++; }
+    if (p.zone === 'OUT') { n.outZone++; if (sw) n.chases++; }
+    if (sw) n.swings++;
     if (p.action === 'SWING') n.whiffs++;
     if (p.result === 'called_strike') n.called++;
-    if (swing && p.zone === 'OUT') n.chases++;
     if (p.inPa === 1 || (p.inPa === null && p.balls === 0 && p.strikes === 0)) {
       n.first++;
       if (!ball) n.firstStrikes++;
+      if (sw) n.firstSwings++;
     }
+    if (p.strikes === 2 && sw) { n.twokSwings++; if (p.action === 'SWING') n.twokWhiffs++; }
+    if (twoK(p)) n.twok++;
+    if (frozen(p)) n.freezes++;
   }
-  return {
+  const out = {
     ...n,
+    strikes: n.pitches - n.balls,
+    csw: n.called + n.whiffs,
     strikePct: ratio(n.pitches - n.balls, n.pitches),
     zonePct: ratio(n.inZone, n.pitches),
     swingPct: ratio(n.swings, n.pitches),
+    zSwingPct: ratio(n.zSwings, n.inZone),
     whiffPct: ratio(n.whiffs, n.swings),
     chasePct: ratio(n.chases, n.outZone),
     cswPct: ratio(n.called + n.whiffs, n.pitches),
     firstStrikePct: ratio(n.firstStrikes, n.first),
+    firstSwingPct: ratio(n.firstSwings, n.first),
+    twokWhiffPct: ratio(n.twokWhiffs, n.twokSwings),
+    freezePct: ratio(n.freezes, n.twok),
   };
+  if (withTypes) {
+    out.byType = {};
+    for (const t of TYPES) {
+      const sub = pitches.filter((p) => p.type === t);
+      out.byType[t] = { ...pitchNumbers(sub, false), usage: ratio(sub.length, n.pitches) };
+    }
+  }
+  return out;
 }
 
+const QAB = ['hit', 'walk', 'hbp', 'sac', 'interference'];
+const RETIRED = ['out', 'strikeout', 'sac'];
+export const CATEGORY = { '1B': 'hit', '2B': 'hit', '3B': 'hit', HR: 'hit', BB: 'walk', HBP: 'hbp', K: 'strikeout', OUT: 'out',
+  SF: 'sac', SH: 'sac', ROE: 'error', FC: 'fc', CI: 'interference' };
+
 // A batting line from plays (the batter's, or those a pitcher faced). Only finished plate
-// appearances count; their pitches go into the pitch numbers.
+// appearances count for results; their pitches go into the pitch numbers. The plate-appearance
+// rates (quality at-bats, 1-1 strikes, putaways, quick outs) count plate appearances with pitches.
 export function line(plays) {
   const pas = plays.filter((p) => p.isPa);
   const c = (o) => pas.filter((p) => p.outcome === o).length;
@@ -333,6 +376,7 @@ export function line(plays) {
     rbi: pas.reduce((x, p) => x + p.rbi, 0),
     tb: pas.reduce((x, p) => x + (p.hit ? p.bases : 0), 0),
   };
+  s.xbh = s.d + s.t + s.hr;
   s.avg = ratio(s.h, s.ab);
   s.obp = ratio(s.h + s.bb + s.hbp, s.ab + s.bb + s.hbp + s.sf);
   s.slg = ratio(s.tb, s.ab);
@@ -341,8 +385,63 @@ export function line(plays) {
   s.lookingK = pas.filter((p) => p.outcome === 'K' && p.pitches.length
     && p.pitches[p.pitches.length - 1].result === 'called_strike').length;
   s.pitch = pitchNumbers(plays.flatMap((p) => p.pitches));
-  s.perPa = ratio(pas.reduce((x, p) => x + p.pitches.length, 0), pas.filter((p) => p.pitches.length).length);
+  const tracked = pas.filter((p) => p.pitches.length);
+  const withPitches = plays.filter((p) => p.pitches.length);
+  s.tracked = tracked.length;
+  s.batters = withPitches.length; // batters faced (or plate appearances) with a pitch, finished or not
+  s.perPa = ratio(tracked.reduce((x, p) => x + p.pitches.length, 0), tracked.length);
+  const cat = (p) => CATEGORY[p.outcome];
+  s.qab = tracked.filter((p) => QAB.includes(cat(p)) || p.pitches.length >= 6
+    || p.pitches.filter((q) => q.strikes === 2 && q.result === 'foul').length >= 2).length;
+  s.qabPct = ratio(s.qab, tracked.length);
+  const oneOne = withPitches.map((p) => p.pitches.find((q) => q.balls === 1 && q.strikes === 1)).filter(Boolean);
+  s.ooPitches = oneOne.length;
+  s.ooStrikes = oneOne.filter((q) => q.result !== 'ball').length;
+  s.ooPct = ratio(s.ooStrikes, s.ooPitches);
+  const two = tracked.filter((p) => p.pitches.some((q) => q.strikes === 2));
+  s.twokPas = two.length;
+  s.putaways = two.filter((p) => p.outcome === 'K').length;
+  s.putawayPct = ratio(s.putaways, s.twokPas);
+  s.quickOuts = tracked.filter((p) => RETIRED.includes(cat(p)) && p.pitches.length <= 3).length;
+  s.quickPct = ratio(s.quickOuts, tracked.length);
+  const lead = pas.filter((p) => p.leadoff);
+  s.leadoffs = lead.length;
+  s.leadoffOuts = lead.filter((p) => RETIRED.includes(cat(p))).length;
+  s.leadoffPct = ratio(s.leadoffOuts, s.leadoffs);
+  s.threeBall = withPitches.filter((p) => p.pitches.some((q) => q.balls === 3 || (q.balls === 2 && q.result === 'ball'))).length;
+  s.threeBallPct = ratio(s.threeBall, withPitches.length);
   return s;
+}
+
+// The same line for each game, in date order (doubleheaders by game number), for trend charts.
+export function byGame(plays, games) {
+  const by = groupBy(plays, (p) => p.game);
+  return games.slice().sort((a, b) => compareGames(b, a)).filter((g) => by.has(g.id)).map((g) => ({
+    id: g.id,
+    title: g.title,
+    label: g.date ? g.date.slice(5).replace('-', '/') + (g.number ? ` G${g.number}` : '') : g.title,
+    line: line(by.get(g.id)),
+  }));
+}
+
+// Swing rate and pitch mix in each ball-strike count.
+export function countGrid(pitches) {
+  const cells = [];
+  for (let b = 0; b <= 3; b++) {
+    for (let k = 0; k <= 2; k++) {
+      const list = pitches.filter((p) => p.balls === b && p.strikes === k);
+      cells.push({ balls: b, strikes: k, pitches: list.length, swingPct: ratio(list.filter(isSwing).length, list.length),
+        mix: TYPES.map((t) => ({ type: t, share: ratio(list.filter((p) => p.type === t).length, list.length) })) });
+    }
+  }
+  return cells;
+}
+
+// Every pitcher and batter pair.
+export function matchups(plays) {
+  const by = groupBy(plays.filter((p) => p.pitcher && p.batter), (p) => `${p.pitcher}\u0000${p.batter}`);
+  return [...by.values()].map((list) => ({ pitcher: list[0].pitcher, batter: list[0].batter, line: line(list) }))
+    .sort((a, b) => a.pitcher.localeCompare(b.pitcher) || b.line.batters - a.line.batters || a.batter.localeCompare(b.batter));
 }
 
 export function outcomeCounts(plays) {

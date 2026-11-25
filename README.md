@@ -171,8 +171,11 @@ Live BP needs script version 6 or later: until the new script is deployed, rows 
 
 **Team dashboard (read-only link).** In the app, **Settings → Team dashboard → Share link** (or **QR code**) gives a
 link to `dashboard/` next to the app: every game with its YouTube video (tap a play to jump to it; *Follow the video*
-highlights the play on screen), a box score, and each hitter's and pitcher's numbers, results, pitch types and
-plate appearances (each one with video has a **Watch** button). Games with a scoresheet also get win probability: a
+highlights the play on screen), a box score. **Hitters** and **Pitchers** show the whole team or one player: the same numbers as the
+claude.ai dashboard (quality at-bats, whiff, chase and freeze rates; strike, first-pitch, 1-1, putaway, quick-out and
+leadoff rates…) with each player's set beside the team's, game-by-game charts, a chart comparing the team on any of
+them, a sortable table of everyone, pitch types, swing rate by count, batter vs pitcher and every plate appearance
+(each one with video has a **Watch** button). Games with a scoresheet also get win probability: a
 chart of the chance of winning play by play, the biggest plays, who moved the game (win probability added for
 hitting, running, pitching and fielding), team totals, and how the run model is worked out. The **Leaders** tab has
 the good and bad leaderboards for a team's hitters and pitchers (streaks across games, rates with a minimum sample). Anyone with the link can *see* all the data but
