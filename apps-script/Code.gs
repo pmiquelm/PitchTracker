@@ -8,6 +8,8 @@
  *  3. Deploy → New deployment → type "Web app".
  *     Execute as: Me.  Who has access: Anyone.  → Deploy, copy the /exec URL.
  *  4. In the app: Settings → paste the URL and the token → Save → Test connection.
+ *  5. Optional: in the app, Settings → Team dashboard shares a read-only link to the
+ *     dashboard (dashboard/ next to the app). It carries a separate VIEW_KEY, made on first use.
  *
  * Updating: deploy the new version of this file (by hand: Deploy → Manage deployments →
  * Edit → Version: New version; or automatically from GitHub, see README). There's no need
@@ -19,7 +21,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 7;
+const VERSION = 8;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -200,15 +202,22 @@ function doGet() {
 }
 
 function doPost(e) {
+  // The team dashboard only reads, with its own key (never the token), and doesn't wait for
+  // the lock: reading never gets in the way of an upload.
+  const body = parseBody_(e);
+  if (body && body.action === 'dashboard') return dashboard_(body);
   const lock = LockService.getScriptLock();
   // Wait less than the app's request timeout (30 s) so a busy sheet gets a clear
   // answer, and stay inside try: an uncaught error returns Google's HTML error
   // page, which the app can only see as a failed request.
   if (!lock.tryLock(15000)) return json({ ok: false, error: 'Sheet busy (another upload is running). Try again' });
   try {
-    const body = JSON.parse(e.postData.contents);
+    if (!body) JSON.parse(e.postData.contents); // throws the reason, answered below
     const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
     if (!token || body.token !== token) return json({ ok: false, error: 'Wrong token' });
+    if (body.action === 'viewerKey') {
+      return json({ ok: true, version: VERSION, key: viewerKey_(body.renew === true) });
+    }
     if (body.action === 'rosters') {
       return json({ ok: true, version: VERSION, rosters: readRosters(SpreadsheetApp.getActiveSpreadsheet()) });
     }
@@ -281,8 +290,95 @@ function upsert(sheet, headers, input) {
   return { received: rows.size, appended: appends.length };
 }
 
+function parseBody_(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    return body && typeof body === 'object' ? body : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ---- Team dashboard (read-only) ----
+// dashboard/ next to the app reads everything it shows with one request: {action: 'dashboard',
+// key}. The key is VIEW_KEY, not the upload TOKEN: it can only read, and replacing it (from the
+// app's Settings, which needs the TOKEN) stops every old dashboard link without touching uploads.
+
+const VIEW_KEY_PROPERTY = 'VIEW_KEY';
+const DASH_PITCH_COLUMNS = ['game_id', 'inning', 'half', 'batting_team', 'pitching_team', 'pa_number',
+  'pitch_number', 'pitch_in_pa', 'batter', 'pitcher', 'balls_before', 'strikes_before', 'pitch_type',
+  'zone', 'action', 'result', 'pa_end', 'session_type'];
+const DASH_PA_COLUMNS = ['game_id', 'inning', 'half', 'batting_team', 'pitching_team', 'pa_number',
+  'batter', 'pitcher', 'pitches', 'result', 'result_label', 'category', 'session_type'];
+const DASH_VIDEO_TIME_COLUMNS = ['game_id', 'event_seq', 'event_code', 'batter', 'seconds'];
+
+// The current viewer key, made the first time it's asked for. `renew` replaces it.
+function viewerKey_(renew) {
+  const props = PropertiesService.getScriptProperties();
+  let key = props.getProperty(VIEW_KEY_PROPERTY);
+  if (!key || renew) {
+    key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty(VIEW_KEY_PROPERTY, key);
+  }
+  return key;
+}
+
+function dashboard_(body) {
+  const key = PropertiesService.getScriptProperties().getProperty(VIEW_KEY_PROPERTY);
+  if (!key || typeof body.key !== 'string' || body.key !== key) {
+    return json({ ok: false, code: 'bad_key', error: 'This dashboard link has been replaced. Ask for the new one' });
+  }
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    return json({
+      ok: true,
+      version: VERSION,
+      at: new Date().toISOString(),
+      pitches: readTab_(ss, SHEET_NAME, DASH_PITCH_COLUMNS, true),
+      pas: readTab_(ss, PA_SHEET_NAME, DASH_PA_COLUMNS, true),
+      pbp: readTab_(ss, PBP_SHEET_NAME, null, false),
+      videoTimes: readTab_(ss, VIDEO_TIMES_SHEET_NAME, DASH_VIDEO_TIME_COLUMNS, false),
+      videos: readVideoLinks_(ss),
+    });
+  } catch (err) {
+    return json({ ok: false, error: String(err) });
+  }
+}
+
+// A tab as {cols, rows}: the given columns (or all, except PlayByPlay's video formula), found by
+// header name, so a moved column never mixes data up. Rows without a game and deleted rows are
+// left out; dates become 'yyyy-MM-dd'.
+function readTab_(ss, name, wanted, dropDeleted) {
+  const sheet = ss.getSheetByName(name);
+  const lastRow = sheet ? sheet.getLastRow() : 0;
+  const lastCol = sheet ? sheet.getLastColumn() : 0;
+  if (lastRow < 1 || lastCol < 1) return { cols: wanted || [], rows: [] };
+  const values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  const header = values[0].map(cellText);
+  // PlayByPlay's video column is a formula over VideoTimes, which is sent as it is.
+  const cols = (wanted || header.filter((h, i) => h && h !== 'video' && !/^=/.test(h) && header.indexOf(h) === i));
+  const at = cols.map((h) => header.indexOf(h));
+  const game = header.indexOf('game_id');
+  const deleted = dropDeleted ? header.indexOf('deleted') : -1;
+  const tz = ss.getSpreadsheetTimeZone ? ss.getSpreadsheetTimeZone() : 'UTC';
+  const rows = [];
+  for (let r = 1; r < values.length; r++) {
+    const row = values[r];
+    if (game < 0 || !cellText(row[game])) continue;
+    if (deleted >= 0 && (row[deleted] === true || cellText(row[deleted]).toUpperCase() === 'TRUE')) continue;
+    rows.push(at.map((i) => (i < 0 ? '' : dashValue_(row[i], tz))));
+  }
+  return { cols: cols, rows: rows };
+}
+
+function dashValue_(v, tz) {
+  if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  if (typeof v === 'number' || typeof v === 'boolean') return v;
+  return cellText(v);
 }
 
 // ---- Video timestamps (play-by-play) ----
@@ -433,8 +529,12 @@ function pbpVideoFormula(col) {
   const keys = vt('A') + '&"|"&' + vt('B');
   const check = r('event_code') + '&"|"&' + r('batter');
   const look = (what) => 'XLOOKUP(' + key + ', ' + keys + ', ' + what + ')';
+  // The label is worked out from the seconds (41:12, 1:02:05), not read from the label column:
+  // Sheets turns a typed "26:19" into a time of day, which would show as 1.0965.
+  const sec = look(vt('E'));
+  const label = 'TEXT(' + sec + '/86400, IF(' + sec + '>=3600, "[h]:mm:ss", "[m]:ss"))';
   return '={"video"; ARRAYFORMULA(IF(' + r('game_id') + '="",, IFERROR(IF(' +
-    look(vt('C') + '&"|"&' + vt('D')) + '=' + check + ', HYPERLINK(' + look(vt('F')) + ', ' + look(vt('G')) +
+    look(vt('C') + '&"|"&' + vt('D')) + '=' + check + ', HYPERLINK(' + look(vt('F')) + ', ' + label +
     '), "⚠ check"))))}';
 }
 
@@ -529,7 +629,9 @@ function setVideoTime(gameId, eventSeq, seconds, link) {
     }
     const row = [game, Number(seq), event.code, event.batter, sec,
       'https://www.youtube.com/watch?v=' + id + '&t=' + sec + 's', formatVideoTime(sec), new Date()];
-    sheet.getRange(existing ? existing.row : Math.max(sheet.getLastRow(), 1) + 1, 1, 1, row.length).setValues([row]);
+    const at = existing ? existing.row : Math.max(sheet.getLastRow(), 1) + 1;
+    sheet.getRange(at, 7).setNumberFormat('@'); // the label stays text ("26:19", not a time of day)
+    sheet.getRange(at, 1, 1, row.length).setValues([row]);
     ensurePbpVideoColumn_(ss);
     return sec;
   });

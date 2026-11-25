@@ -169,10 +169,23 @@ Live BP needs script version 6 or later: until the new script is deployed, rows 
 
 ### 7. Dashboard
 
+**Team dashboard (read-only link).** In the app, **Settings → Team dashboard → Share link** (or **QR code**) gives a
+link to `dashboard/` next to the app: every game with its YouTube video (tap a play to jump to it; *Follow the video*
+highlights the play on screen), a box score, and each hitter's and pitcher's numbers, results, pitch types and
+plate appearances (each one with video has a **Watch** button). Games with a scoresheet also get win probability: a
+chart of the chance of winning play by play, the biggest plays, who moved the game (win probability added for
+hitting, running, pitching and fielding), team totals, and how the run model is worked out. The **Leaders** tab has
+the good and bad leaderboards for a team's hitters and pitchers (streaks across games, rates with a minimum sample). Anyone with the link can *see* all the data but
+can't change anything, and doesn't need a Google account. The first time, it asks to confirm the sheet code. The link
+carries a separate read-only key, not the token: **Replace the link…** makes a new key, which stops every old
+dashboard link without affecting recorders. Needs script version 8 or later. Data is read fresh on every visit.
+Games with a transcribed scoresheet (PlayByPlay tab) show its plays, with the app's pitches matched to each plate
+appearance; other games and live BP show the app's plate appearances.
+
 - The **Summary** tab has starter pivots for games (live BP left out): pitches by pitcher and type, batter action by pitch type, zone by pitch type,
   ball-in-play results by pitch type, results by batter and results against each pitcher. Below them, the same for
   live BP: pitches by pitcher and type, batter action by pitch type, results by batter, and batter vs pitcher.
-- For a proper dashboard, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
+- For your own dashboards, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
   Add a filter `deleted = false`, and a filter control on `session_type` to show games, live BP or both.
   Add the **PlateAppearances** tab as a second source for results.
 

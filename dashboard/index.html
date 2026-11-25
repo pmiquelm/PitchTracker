@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#123d2c">
+  <!-- Its own lockdown, separate from the app's: own files only, data only from Google Apps
+       Script, and YouTube's player (its script, its frame and its thumbnails), nothing else. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://www.youtube.com; style-src 'self'; img-src 'self' data: https://i.ytimg.com; frame-src https://www.youtube-nocookie.com https://www.youtube.com; connect-src https://script.google.com https://script.googleusercontent.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <!-- YouTube refuses to play embeds that send no referrer. This sends only the site's origin
+       (never the path or the #link). -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Team dashboard · PitchTracker</title>
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../icons/icon-180.png">
+  <link rel="stylesheet" href="dash.css">
+  <script type="module" src="dash.js"></script>
+</head>
+<body>
+  <div id="root"><p class="state">Loading…</p></div>
+</body>
+</html>

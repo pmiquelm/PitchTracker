@@ -14,6 +14,8 @@ const TIMEOUT_MS = 30000;
 export const SCRIPT_VERSION = 6;
 // Rosters need a newer script than uploads do. Uploads keep working with an older one.
 export const ROSTER_SCRIPT_VERSION = 4;
+// So do dashboard links (the viewer key and the read-only dashboard action).
+export const DASHBOARD_SCRIPT_VERSION = 8;
 const OUTDATED = 'The sheet script is out of date: deploy the new Code.gs (merge to main, or paste it and Deploy → Manage deployments → Edit → New version)';
 
 let status = { pending: 0, syncing: false, configured: false, error: null, lastSync: null };
@@ -134,4 +136,18 @@ export function initSync() {
   });
   setInterval(() => { if (status.pending && !status.syncing) syncNow(); }, 30000);
   syncSoon(0);
+}
+
+// The sheet's read-only viewer key, for team dashboard links. The script makes it the first
+// time; `renew` replaces it, so every dashboard link shared before stops working.
+export async function fetchViewerKey({ renew = false } = {}) {
+  const { url, token } = await db.getSettings();
+  if (!url) throw new Error('Connect a sheet first');
+  try {
+    const body = await post(url, { token, action: 'viewerKey', renew }, DASHBOARD_SCRIPT_VERSION);
+    return { url, key: body.key };
+  } catch (err) {
+    // A script from before dashboards reads this as an empty upload.
+    throw new Error(err?.message === 'No rows' ? OUTDATED : describeError(err));
+  }
 }
