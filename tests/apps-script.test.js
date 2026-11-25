@@ -14,6 +14,7 @@ class FakeSheet {
   getMaxRows() { return this.maxRows; }
   insertColumnsAfter(after, n) { this.maxCols += n; }
   setFrozenRows() {}
+  deleteRow(r) { this.cells.splice(r - 1, 1); }
   clear() { this.cells = []; }
   copyTo(ss) { const c = ss.insertSheet(`Copy of ${this.name}`); c.cells = this.cells.map((r) => r.slice()); return c; }
   setName(n) { this.name = n; return this; }
@@ -21,16 +22,8 @@ class FakeSheet {
     if (col + nCols - 1 > this.maxCols) throw new Error('The coordinates of the range are outside the dimensions of the sheet.');
     const sheet = this;
     const range = {
-      // A formula is stored as its text; reading values gives a stand-in for what it shows,
-      // so code that copies values instead of formulas loses it, as in Sheets.
-      getValues: () => Array.from({ length: nRows }, (_, i) => Array.from({ length: nCols }, (_, j) => {
-        const v = sheet.cells[row - 1 + i]?.[col - 1 + j] ?? '';
-        return typeof v === 'string' && v.startsWith('=') ? `(shows ${v})` : v;
-      })),
-      getFormulas: () => Array.from({ length: nRows }, (_, i) => Array.from({ length: nCols }, (_, j) => {
-        const v = sheet.cells[row - 1 + i]?.[col - 1 + j];
-        return typeof v === 'string' && v.startsWith('=') ? v : '';
-      })),
+      getValues: () => Array.from({ length: nRows }, (_, i) => Array.from({ length: nCols },
+        (_, j) => sheet.cells[row - 1 + i]?.[col - 1 + j] ?? '')),
       setValues: (values) => {
         values.forEach((r, i) => r.forEach((v, j) => {
           while (sheet.cells.length < row + i) sheet.cells.push([]);
@@ -38,9 +31,9 @@ class FakeSheet {
         }));
         return range;
       },
+      getFormulas: () => range.getValues().map((r) => r.map((v) => (typeof v === 'string' && v.startsWith('=') ? v : ''))),
       setValue: (v) => range.setValues([[v]]),
       setFormula: (f) => range.setValues([[f]]),
-      clearContent: () => range.setValues(Array.from({ length: nRows }, () => Array(nCols).fill(''))),
       setFontWeight: () => range,
       setNumberFormat: () => range,
     };
@@ -50,7 +43,9 @@ class FakeSheet {
 
 function load(sheets = {}) {
   const ss = {
-    sheets: Object.entries(sheets).map(([name, cells]) => Object.assign(new FakeSheet(name), { cells })),
+    // A real sheet always has room for its data
+    sheets: Object.entries(sheets).map(([name, cells]) => Object.assign(new FakeSheet(name),
+      { cells, maxCols: Math.max(26, ...cells.map((r) => r.length)) })),
     getSheetByName(n) { return this.sheets.find((s) => s.name === n) || null; },
     insertSheet(n) { const s = new FakeSheet(n); this.sheets.push(s); return s; },
   };
@@ -65,7 +60,8 @@ function load(sheets = {}) {
   };
   vm.createContext(ctx);
   vm.runInContext(`${readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8')}
-    this.api = { setup, doPost, doGet, HEADERS, PA_HEADERS, youtubeId, videoToolGames, videoToolPas, saveVideoLink, setVideoTime };`, ctx);
+    this.api = { setup, doPost, doGet, HEADERS, PA_HEADERS, youtubeId, columnLetter, pbpVideoFormula,
+      videoToolGames, videoToolEvents, saveVideoLink, setVideoTime };`, ctx);
   const { HEADERS, PA_HEADERS, ...fns } = ctx.api;
   return { ss, ...fns, HEADERS: [...HEADERS], PA_HEADERS: [...PA_HEADERS] }; // copied out of the sandbox for deepEqual
 }
@@ -238,13 +234,27 @@ test('a Pos-column Rosters tab with anything typed in is kept and still read', (
   assert.deepEqual(api.ss.getSheetByName('Rosters').cells, cells, 'left as it was');
 });
 
-// ---- Video timestamps ----
+// ---- Video timestamps (PlayByPlay) ----
+// The 40 columns scripts/scoresheet.py writes (the scoresheet skill), in its order.
+const PBP_HEADERS = ['game_id', 'date', 'event_seq', 'inning', 'half', 'batting_team', 'fielding_team', 'pa_seq',
+  'lineup_slot', 'batter', 'pitcher', 'event_code', 'event_desc', 'is_pa', 'is_ab', 'is_hit', 'bases', 'outs_before',
+  'runner_1b_before', 'runner_2b_before', 'runner_3b_before', 'base_state_before', 'outs_on_play', 'outs_after',
+  'runner_1b_after', 'runner_2b_after', 'runner_3b_after', 'base_state_after', 'runs_on_play', 'rbi',
+  'away_score_before', 'home_score_before', 'bat_lead_before', 'error_fielder', 'error_position',
+  'outs_after_no_error', 'bases_after_no_error', 'runs_no_error', 'fielders', 'runner'];
+const G1 = '2026-04-11- @ FLAMINGOS GAME 2';
+const pbpRow = (game, date, seq, half, batter, code, desc, isPa = 1) => PBP_HEADERS.map((h) => ({
+  game_id: game, date, event_seq: seq, inning: 1, half, batting_team: half === 'top' ? 'Skylarks' : 'Flamingos',
+  batter, event_code: code, event_desc: desc, is_pa: isPa,
+})[h] ?? '');
+const pbpGame1 = () => [
+  pbpRow(G1, '2026-04-11', 1, 'top', 'Tournoux Syan', 'K', 'Strikeout'),
+  pbpRow(G1, '2026-04-11', 2, 'top', 'Leidinger Max', '1B', 'Single'),
+  pbpRow(G1, '2026-04-11', 3, 'top', 'Mannel Julius', 'SB', 'Leidinger M steals 2B', 0),
+  pbpRow(G1, '2026-04-11', 4, 'bottom', 'Gimon Carlos', 'GO', 'Ground out 6-3'),
+];
 const LINK = 'https://youtu.be/abcDEF12345?si=x';
-const videoCell = (api, id) => {
-  const sheet = api.ss.getSheetByName('PlateAppearances');
-  const row = sheet.cells.find((r) => r[0] === id);
-  return row[api.PA_HEADERS.indexOf('video')] ?? '';
-};
+const withPbp = (rows) => load({ PlayByPlay: [PBP_HEADERS.slice(), ...rows] });
 
 test('youtubeId accepts the usual YouTube links and nothing else', () => {
   const api = load();
@@ -253,72 +263,102 @@ test('youtubeId accepts the usual YouTube links and nothing else', () => {
     'abcDEF12345', ' https://www.youtube.com/embed/abcDEF12345 ']) assert.equal(api.youtubeId(ok), 'abcDEF12345', ok);
   for (const bad of ['', 'https://vimeo.com/abcDEF12345', 'https://evil.com/youtu.be/abcDEF12345',
     'https://youtu.be/abcDEF1234', 'https://youtu.be/abcDEF123456', 'abc"DEF1234', null]) assert.equal(api.youtubeId(bad), '', bad);
+  assert.deepEqual([1, 26, 27, 40, 41, 52, 53].map(api.columnLetter), ['A', 'Z', 'AA', 'AN', 'AO', 'AZ', 'BA']);
 });
 
-test('video times: written as a link, and uploads never overwrite them', () => {
+test('stamping writes VideoTimes, and PlayByPlay gets one video formula after its 40 columns', () => {
+  const api = withPbp(pbpGame1());
+  assert.equal(api.setVideoTime(G1, 3, 2472.9, LINK), 2472);
+  assert.equal(api.setVideoTime(G1, '1', 3725, LINK), 3725);
+  const vt = api.ss.getSheetByName('VideoTimes').cells;
+  assert.deepEqual(vt[0], ['game_id', 'event_seq', 'event_code', 'batter', 'seconds', 'link', 'label', 'updated_at']);
+  assert.deepEqual(vt[1].slice(0, 7), [G1, 3, 'SB', 'Mannel Julius', 2472, 'https://www.youtube.com/watch?v=abcDEF12345&t=2472s', '41:12']);
+  assert.deepEqual(vt[2].slice(4, 7), [3725, 'https://www.youtube.com/watch?v=abcDEF12345&t=3725s', '1:02:05']);
+  // Re-stamping replaces; clearing removes the row
+  api.setVideoTime(G1, 3, 100, LINK);
+  assert.equal(api.ss.getSheetByName('VideoTimes').cells.length, 3);
+  assert.equal(api.ss.getSheetByName('VideoTimes').cells[1][4], 100);
+  assert.equal(api.setVideoTime(G1, 1, null, ''), null);
+  assert.deepEqual(api.ss.getSheetByName('VideoTimes').cells.map((r) => r[1]), ['event_seq', 3]);
+
+  const pbp = api.ss.getSheetByName('PlayByPlay').cells;
+  assert.equal(pbp[0].length, 41, 'video is column 41 (AO); the 40 generated columns are untouched');
+  assert.deepEqual(pbp[0].slice(0, 40), PBP_HEADERS);
+  assert.equal(pbp[0][40], api.pbpVideoFormula(Object.fromEntries(PBP_HEADERS.map((h, i) => [h, i]))));
+  assert.deepEqual(pbp.slice(1).map((r) => r.length), [40, 40, 40, 40], 'no row cells written');
+
+  assert.throws(() => api.setVideoTime(G1, 99, 5, LINK), /no longer in PlayByPlay/);
+  assert.throws(() => api.setVideoTime(G1, 2, 5, 'https://vimeo.com/1'), /Load the YouTube video/);
+  assert.throws(() => api.setVideoTime(G1, 2, -1, LINK), /Not a video time/);
+  assert.throws(() => api.setVideoTime(G1, 2, 'x', LINK), /Not a video time/);
+});
+
+test('the video formula looks rows up by game and event, and checks code and batter', () => {
   const api = load();
-  api.setup();
-  post(api, { rows: [], pas: [{ id: 'pa1', game_id: 'g1', result: '1B' }] });
-  assert.equal(api.setVideoTime('pa1', 2472.8, LINK), 2472);
-  const formula = '=HYPERLINK("https://www.youtube.com/watch?v=abcDEF12345&t=2472s", "41:12")';
-  assert.equal(videoCell(api, 'pa1'), formula);
-  // The phone resends the row (an undo, a late outcome) and adds another
-  post(api, { rows: [], pas: [{ id: 'pa1', game_id: 'g1', result: '2B', deleted: true }, { id: 'pa2', game_id: 'g1' }] });
-  assert.equal(videoCell(api, 'pa1'), formula);
-  assert.equal(videoCell(api, 'pa2'), '');
-  assert.equal(api.setVideoTime('pa2', 3725, 'abcDEF12345'), 3725);
-  assert.match(videoCell(api, 'pa2'), /t=3725s", "1:02:05"\)$/);
-  assert.equal(api.setVideoTime('pa1', null, ''), null);
-  assert.equal(videoCell(api, 'pa1'), '');
-  assert.throws(() => api.setVideoTime('pa2', 5, 'https://vimeo.com/1'), /Load the YouTube video/);
-  assert.throws(() => api.setVideoTime('pa2', -1, LINK), /Not a video time/);
-  assert.throws(() => api.setVideoTime('pa2', 'x', LINK), /Not a video time/);
-  assert.throws(() => api.setVideoTime('nope', 5, LINK), /no longer in the sheet/);
+  const col = Object.fromEntries(PBP_HEADERS.map((h, i) => [h, i]));
+  const f = api.pbpVideoFormula(col);
+  assert.equal(f, '={"video"; ARRAYFORMULA(IF(A2:A="",, IFERROR(IF('
+    + 'XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!C2:C&"|"&VideoTimes!D2:D)=L2:L&"|"&J2:J, '
+    + 'HYPERLINK(XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!F2:F), '
+    + 'XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!G2:G)), "⚠ check"))))}');
 });
 
-test('a PlateAppearances tab from before the video column gets it on the next upload', () => {
-  const OLD_PA = [...load().PA_HEADERS.filter((h) => h !== 'video')];
-  const row = OLD_PA.map((h) => (h === 'deleted' ? false : `v-${h}`));
-  const api = load({ PlateAppearances: [OLD_PA.slice(), row.slice()] });
-  assert.equal(post(api, { rows: [], pas: [] }).ok, true);
-  const cells = api.ss.getSheetByName('PlateAppearances').cells;
-  assert.deepEqual(cells[0], api.PA_HEADERS);
-  assert.deepEqual(cells[1].slice(0, OLD_PA.length), row);
-  assert.equal(cells[1][api.PA_HEADERS.indexOf('video')], '');
+test('an existing video column is reused, and the formula follows the columns if they move', () => {
+  const moved = ['note', ...PBP_HEADERS.slice(0, 20), 'video', ...PBP_HEADERS.slice(20)];
+  const row = (seq) => moved.map((h) => ({ game_id: 'g', event_seq: seq, event_code: 'K', batter: 'A', is_pa: 1 })[h] ?? '');
+  const api = load({ PlayByPlay: [moved.slice(), row(1)] });
+  api.setVideoTime('g', 1, 10, LINK);
+  const header = api.ss.getSheetByName('PlayByPlay').cells[0];
+  assert.equal(header.length, moved.length);
+  assert.match(header[21], /IF\(B2:B="",, .*XLOOKUP\(B2:B&"\|"&D2:D,/);
 });
 
-test('moving to a new layout keeps video links as formulas', () => {
-  const api0 = load();
-  // A layout with a column missing, as a future change might leave it
-  const old = api0.PA_HEADERS.filter((h) => h !== 'fielder');
-  const link = '=HYPERLINK("https://www.youtube.com/watch?v=abcDEF12345&t=60s", "1:00")';
-  const row = old.map((h) => (h === 'video' ? link : h === 'id' ? 'pa1' : ''));
-  const api = load({ PlateAppearances: [old.slice(), row] });
-  api.setup();
-  assert.equal(videoCell(api, 'pa1'), link);
-});
-
-test('the tool lists games and their at-bats in order, without undone ones', () => {
-  const api = load();
-  api.setup();
-  const pa = (id, game, n, at, extra = {}) => ({ id, game_id: game, pa_number: n, recorded_at: at, batting_team: 'T' + (n % 2),
-    batter: 'B' + n, result_label: 'Single', inning: 1, half: n % 2 ? 'top' : 'bottom', ...extra });
-  post(api, { rows: [], pas: [
-    pa('a3', 'old', 3, '2026-05-01T10:03:00Z'), pa('a1', 'old', 1, '2026-05-01T10:00:00Z'),
-    pa('a2', 'old', 2, '2026-05-01T10:01:00Z', { deleted: true }), pa('a2b', 'old', 2, '2026-05-01T10:02:00Z'),
-    pa('b1', 'new', 1, '2026-06-01T10:00:00Z'),
-  ] });
-  api.setVideoTime('a1', 30, LINK);
+test('the tool lists games newest first and a game\'s plays in order, between-pitch plays included', () => {
+  const api = withPbp([
+    pbpRow('old', '2026-04-01', 2, 'top', 'B', '1B', 'Single'), pbpRow('old', '2026-04-01', 1, 'top', 'A', 'K', 'Strikeout'),
+    ...pbpGame1(),
+  ]);
+  api.setVideoTime(G1, 3, 30, LINK);
+  api.saveVideoLink(G1, LINK);
   const games = JSON.parse(JSON.stringify(api.videoToolGames()));
-  assert.deepEqual(games.map((g) => [g.id, g.pas, g.stamped, g.teams.length]), [['new', 1, 0, 1], ['old', 3, 1, 2]]);
-  const d = JSON.parse(JSON.stringify(api.videoToolPas('old')));
-  assert.deepEqual(d.pas.map((p) => [p.id, p.video]), [['a1', 30], ['a2b', null], ['a3', null]]);
-  assert.deepEqual([d.pas[0].batter, d.pas[0].result, d.pas[0].half, d.link], ['B1', 'Single', 'top', '']);
+  assert.deepEqual(games.map((g) => [g.id, g.events, g.stamped, g.teams.length, g.link]),
+    [[G1, 4, 1, 2, 'https://www.youtube.com/watch?v=abcDEF12345'], ['old', 2, 0, 1, '']]);
+  const d = JSON.parse(JSON.stringify(api.videoToolEvents(G1)));
+  assert.deepEqual(d.events.map((e) => [e.seq, e.code, e.isPa, e.video, e.stale]),
+    [['1', 'K', true, null, null], ['2', '1B', true, null, null], ['3', 'SB', false, 30, null], ['4', 'GO', true, null, null]]);
+  assert.deepEqual([d.events[2].desc, d.events[2].half, d.link], ['Leidinger M steals 2B', 'top', 'https://www.youtube.com/watch?v=abcDEF12345']);
+  assert.deepEqual(api.videoToolEvents('old').events.map((e) => e.seq), ['1', '2']);
+});
+
+test('regenerating PlayByPlay keeps times; a play that changed is flagged, not linked', () => {
+  const api = withPbp(pbpGame1());
+  api.setVideoTime(G1, 2, 50, LINK);
+  api.setVideoTime(G1, 4, 90, LINK);
+  // The skill rewrites the 40 columns: a corrected game file inserted a wild pitch as event 2
+  const sheet = api.ss.getSheetByName('PlayByPlay');
+  const fixed = pbpGame1();
+  fixed.splice(1, 0, pbpRow(G1, '2026-04-11', 2, 'top', 'Leidinger Max', 'WP', 'Wild pitch', 0));
+  fixed.forEach((r, i) => { r[2] = i + 1; });
+  fixed.forEach((r, i) => { sheet.cells[i + 1] = r; });
+  const d = api.videoToolEvents(G1);
+  assert.deepEqual(d.events.map((e) => [e.code, e.video, e.stale]),
+    [['K', null, null], ['WP', null, 50], ['1B', null, null], ['SB', null, 90], ['GO', null, null]]);
+  assert.equal(api.videoToolGames()[0].stamped, 0);
+  assert.match(sheet.cells[0][40], /^=\{"video"/, 'the header formula is still there');
+  // Re-stamping the WP fixes its row
+  api.setVideoTime(G1, 2, 52, LINK);
+  assert.deepEqual(api.videoToolEvents(G1).events[1].video, 52);
+});
+
+test('the tool explains a missing PlayByPlay tab', () => {
+  const api = load();
+  assert.throws(() => api.videoToolGames(), /no PlayByPlay tab/);
+  const bad = load({ PlayByPlay: [['game_id', 'date']] });
+  assert.throws(() => bad.videoToolGames(), /no event_seq, event_code, batter column/);
 });
 
 test('saveVideoLink keeps one link per game in the Videos tab', () => {
-  const api = load();
-  api.setup();
+  const api = withPbp(pbpGame1());
   assert.equal(api.saveVideoLink('g1', LINK), 'https://www.youtube.com/watch?v=abcDEF12345');
   api.saveVideoLink('g2', 'https://www.youtube.com/watch?v=zzzzzzzzzzz');
   api.saveVideoLink('g1', 'https://youtu.be/yyyyyyyyyyy');
@@ -329,15 +369,21 @@ test('saveVideoLink keeps one link per game in the Videos tab', () => {
   ]);
   assert.throws(() => api.saveVideoLink('g1', 'https://vimeo.com/1'), /isn't a YouTube/);
   assert.throws(() => api.saveVideoLink('', LINK), /Pick a game/);
-  post(api, { rows: [], pas: [{ id: 'p', game_id: 'g2' }] });
-  assert.equal(api.videoToolPas('g2').link, 'https://www.youtube.com/watch?v=zzzzzzzzzzz');
+});
+
+test('uploads from the app leave the video tabs alone', () => {
+  const api = withPbp(pbpGame1());
+  api.setVideoTime(G1, 1, 5, LINK);
+  const before = JSON.stringify([api.ss.getSheetByName('PlayByPlay').cells, api.ss.getSheetByName('VideoTimes').cells]);
+  assert.equal(post(api, { rows: [{ id: 'p1' }], pas: [{ id: 'a1' }] }).ok, true);
+  assert.equal(JSON.stringify([api.ss.getSheetByName('PlayByPlay').cells, api.ss.getSheetByName('VideoTimes').cells]), before);
 });
 
 test('the tool page has no template-literal holes and its script parses', () => {
   const gs = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
   const html = gs.slice(gs.indexOf('const VIDEO_TOOL_HTML = String.raw`'));
   assert.ok(!html.slice(36, html.lastIndexOf('`')).includes('${'));
-  const ctx = { api: null };
+  const ctx = {};
   vm.createContext(ctx);
   vm.runInContext(html, ctx);
   const page = vm.runInContext('VIDEO_TOOL_HTML', ctx);
