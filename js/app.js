@@ -6,11 +6,11 @@ import {
   battingIndex, fieldingIndex, battingTeam, fieldingTeam, currentBatter, halfLabel, gameTeams,
 } from './game.js';
 import {
-  initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection, fetchRosters,
+  initSync, syncNow, syncSoon, refreshPending, onSyncStatus, getSyncStatus, testConnection, fetchRosters, fetchViewerKey,
 } from './sync.js';
 import { findByName, findByNumber } from './roster.js';
 import { backupJSON, exportCSV, exportPaCSV, importBackup } from './backup.js';
-import { buildSetupLink, decodeConnect, isSetupLinkHash, isValidScriptUrl, sheetCode } from './connect.js';
+import { buildSetupLink, buildViewerLink, decodeConnect, isSetupLinkHash, isValidScriptUrl, sheetCode } from './connect.js';
 import qrcodegen from './vendor/qrcodegen.js';
 
 const app = document.getElementById('app');
@@ -1284,13 +1284,25 @@ async function showSettings() {
       <h2>Share with other recorders</h2>
       ${settings.url && settings.token ? `
         <p class="muted small">Anyone with this link or QR code can add pitches to this sheet. Share it only with people who
-        record for you. To let people <em>view</em> the data, share the Google Sheet itself instead.</p>
+        record for you. To let people <em>view</em> the data, share the team dashboard link below instead.</p>
         <p class="link-preview">${esc(appBaseUrl())}#c=•••••••• <span class="muted">(${buildSetupLink(appBaseUrl(), settings).length} characters)</span></p>
         <div class="row-buttons">
           <button data-act="share-link" class="primary">Share setup link</button>
           <button data-act="show-qr">Show QR code</button>
         </div>`
         : '<p class="muted small">Connect a sheet first, then you can share a setup link from here.</p>'}
+      <h2>Team dashboard</h2>
+      ${settings.url && settings.token ? `
+        <p class="muted small">A read-only page with every game, hitter and pitcher, and the game videos. Anyone with
+        this link can <em>see</em> all the data in the sheet but can't change anything. Replacing the link stops every old
+        one; recorders' setup links keep working.</p>
+        <div class="row-buttons">
+          <button data-act="share-dash" class="primary">Share link</button>
+          <button data-act="qr-dash">QR code</button>
+          <button data-act="open-dash">Open</button>
+        </div>
+        <div class="row-buttons"><button data-act="renew-dash">Replace the link…</button></div>`
+        : '<p class="muted small">Connect a sheet first, then you can share a dashboard link from here.</p>'}
       <h2>Use a setup link</h2>
       <input id="connect-input" placeholder="Paste a setup link" autocomplete="off" autocapitalize="off" spellcheck="false">
       <div class="row-buttons"><button data-act="paste-link">Paste</button><button data-act="connect">Connect</button></div>
@@ -1325,6 +1337,7 @@ async function showSettings() {
     }
     if (btn.dataset.act === 'share-link') shareSetupLink(buildSetupLink(appBaseUrl(), settingsCache));
     if (btn.dataset.act === 'show-qr') showQrDialog();
+    if (['share-dash', 'qr-dash', 'open-dash', 'renew-dash'].includes(btn.dataset.act)) dashboardLinkAction(btn);
     if (btn.dataset.act === 'paste-link') pasteInto(document.getElementById('connect-input'));
     if (btn.dataset.act === 'connect') {
       if (await connectFromLink(document.getElementById('connect-input').value)) {
@@ -1506,23 +1519,26 @@ function qrSvg(text) {
       if (qr.getModule(x, y)) d += `M${x + border},${y + border}h1v1h-1z`;
     }
   }
-  return `<svg class="qr" viewBox="0 0 ${size} ${size}" role="img" aria-label="QR code with the setup link"
+  return `<svg class="qr" viewBox="0 0 ${size} ${size}" role="img" aria-label="QR code with the link"
     shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
 }
 
-async function showQrDialog() {
+async function showQrDialog(dashLink = null) {
   if (!settingsCache.url || !settingsCache.token) return;
   const code = await sheetCode(settingsCache.url);
   let left = QR_SECONDS;
-  const dlg = openDialog(`
-    <h2>Scan to connect</h2>
-    <div class="qr-box">${qrSvg(buildSetupLink(appBaseUrl(), settingsCache))}</div>
-    <p class="center">Sheet code <strong class="sheet-code inline">${code}</strong> · closes in <span id="qr-left">${left}</span> s</p>
-    <ul class="small qr-rules">
-      <li>Lets a phone <strong>add pitches to your sheet</strong>: show it only to your recorders.</li>
+  const rules = dashLink
+    ? `<li>Opens the <strong>read-only team dashboard</strong>: anyone who scans it can see all the sheet's data.</li>
       <li>Scan with the phone's own <strong>Camera</strong> app, not a scanner app.</li>
-      <li>Don't screenshot or post it. The other phone must show the same sheet code.</li>
-    </ul>
+      <li>The dashboard asks to confirm the same sheet code.</li>`
+    : `<li>Lets a phone <strong>add pitches to your sheet</strong>: show it only to your recorders.</li>
+      <li>Scan with the phone's own <strong>Camera</strong> app, not a scanner app.</li>
+      <li>Don't screenshot or post it. The other phone must show the same sheet code.</li>`;
+  const dlg = openDialog(`
+    <h2>${dashLink ? 'Scan to open the dashboard' : 'Scan to connect'}</h2>
+    <div class="qr-box">${qrSvg(dashLink || buildSetupLink(appBaseUrl(), settingsCache))}</div>
+    <p class="center">Sheet code <strong class="sheet-code inline">${code}</strong> · closes in <span id="qr-left">${left}</span> s</p>
+    <ul class="small qr-rules">${rules}</ul>
     <div class="row-buttons"><button data-act="close" class="primary">Close</button></div>`);
   dlg.scrollTop = 0; // the browser focuses Close on open, which can scroll the code out of view
   // Wipe the code from the page first, then close: removal is instant, not after the
@@ -1544,6 +1560,77 @@ async function showQrDialog() {
     document.removeEventListener('visibilitychange', hide);
     window.removeEventListener('pagehide', shut);
   });
+}
+
+// ---------- team dashboard links ----------
+// dashboard/ next to the app. Its link carries the script address and the sheet's read-only
+// viewer key (never the token), which only the script can make or replace.
+function dashboardBaseUrl() {
+  return new URL('dashboard/', appBaseUrl()).href;
+}
+
+async function dashboardLinkAction(btn) {
+  const act = btn.dataset.act;
+  if (act === 'renew-dash' && !(await confirmRenewDashboard())) return;
+  if (btn.disabled) return;
+  // Opened now, while this is still the tap: a window opened after waiting for the sheet is
+  // blocked as a pop-up.
+  const win = act === 'open-dash' ? window.open('', '_blank') : null;
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Asking the sheet…';
+  let link;
+  try {
+    link = buildViewerLink(dashboardBaseUrl(), await fetchViewerKey({ renew: act === 'renew-dash' }));
+  } catch (err) {
+    win?.close();
+    toast(`Couldn't get the dashboard link: ${esc(err.message)}`, 'error');
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+  if (act === 'share-dash') shareDashboardLink(link);
+  else if (act === 'qr-dash') showQrDialog(link);
+  else if (act === 'open-dash') {
+    if (win) { win.opener = null; win.location.href = link; } else location.href = link;
+  }
+  else if (act === 'renew-dash') toast('New dashboard link made: old links no longer work. Share the new one');
+}
+
+function confirmRenewDashboard() {
+  return new Promise((resolve) => {
+    let answer = false;
+    const dlg = openDialog(`
+      <h2>Replace the dashboard link?</h2>
+      <p class="small">Every dashboard link and QR code shared so far stops working, on every phone that opened one.
+        Do this if a link reached someone it shouldn't have. Then share the new link with the team.</p>
+      <p class="small">Recorders' setup links are not affected.</p>
+      <div class="row-buttons">
+        <button data-act="close">Cancel</button>
+        <button data-act="yes" class="primary">Replace</button>
+      </div>`, (act, b, d) => {
+      if (act === 'yes') { answer = true; d.close(); }
+    });
+    dlg.addEventListener('close', () => resolve(answer));
+  });
+}
+
+async function shareDashboardLink(link) {
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: 'PitchTracker team dashboard', text: 'The team dashboard (read-only):', url: link });
+      return;
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Dashboard link copied');
+  } catch {
+    toast('Could not share or copy the link on this device', 'error');
+  }
 }
 
 // ---------- boot ----------

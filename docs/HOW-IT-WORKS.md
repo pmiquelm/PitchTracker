@@ -74,6 +74,7 @@ flowchart LR
 | **You (the owner)** | The Google account that owns the sheet | Everything: record, see all data, change the script, cut off access |
 | **A recorder** | The setup link (section 8) | Add pitches to your sheet from their phone, and download the team rosters. Cannot read anything else in the sheet unless you also share it |
 | **A viewer** | The sheet shared with them (view only) | Read the data and dashboards. Never touches the app |
+| **The team** | The team dashboard link (7.9) | See every game, video, hitter and pitcher in the dashboard page. Can't change anything, and can't read the sheet itself |
 
 ---
 
@@ -713,12 +714,24 @@ A second, separate use of the same script: a window **inside the sheet**, used o
 - **The video.** The page embeds YouTube's official player ([IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)). The page asks it the current second (`getCurrentTime`) and tells it to play, pause or jump, which is all the keys do. Clicking inside the video gives it the keyboard, so the page takes the keyboard back whenever the player changes state or the window loses focus to it.
 - **Talking to the script.** The page calls four functions through `google.script.run`, which runs them as the person at the computer (an editor of the sheet; no token involved): `videoToolGames`, `videoToolEvents` (one game's PlayByPlay rows in `event_seq` order), `saveVideoLink` (the game's link, into the **Videos** tab) and `setVideoTime`. Each takes the script lock, like `doPost`. PlayByPlay's columns are found by header name.
 - **Where a time lives.** PlayByPlay is regenerated from the Scoresheets tab and sometimes rebuilt from scratch, so nothing is written into its rows. `setVideoTime` writes one row in **VideoTimes**: `game_id`, `event_seq`, and the play's `event_code` and `batter` *as they were when stamped*, then the seconds, the link (`…watch?v=<id>&t=<seconds>s`) and the label (`41:12`). The video id is checked to be exactly 11 letters, digits, `-` or `_` ([`youtubeId`](../apps-script/Code.gs)), and the seconds are a whole number.
-- **PlayByPlay's `video` column** is one `ARRAYFORMULA` in its header cell ([`pbpVideoFormula`](../apps-script/Code.gs)), after the generated columns. For every row it looks up `game_id|event_seq` in VideoTimes. If the stored code and batter still match the row, it shows `HYPERLINK(link, label)`; if they don't (a corrected game file inserted or removed a play, so that number is now a different play), it shows `⚠ check`, never a link to the wrong moment. Regenerating the rows therefore keeps every time without a refill step. The formula is rewritten from the current header positions each time the window opens or a time is saved.
+- **PlayByPlay's `video` column** is one `ARRAYFORMULA` in its header cell ([`pbpVideoFormula`](../apps-script/Code.gs)), after the generated columns. For every row it looks up `game_id|event_seq` in VideoTimes. If the stored code and batter still match the row, it shows `HYPERLINK(link, label)`, with the label worked out from the seconds (a typed `26:19` would turn into a time of day in Sheets and show as `1.0965`); if they don't (a corrected game file inserted or removed a play, so that number is now a different play), it shows `⚠ check`, never a link to the wrong moment. Regenerating the rows therefore keeps every time without a refill step. The formula is rewritten from the current header positions each time the window opens or a time is saved.
 - **Permission.** Showing a window needs a permission the upload part didn't (`script.container.ui`, *display content in the spreadsheet*). Google asks the sheet's owner to approve the script again after the first deploy that has it. Until then it may refuse to run the script at all, uploads included; the phones keep their rows pending and retry (13), and the deploy's version check can fail. Approving once (open the sheet, click the menu) fixes both.
 
 ### 7.8 Dashboards
 
 Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets → Pitches**. Add a filter `deleted = false`, and a control on `session_type` (games, live BP or both). Add **PlateAppearances** as a second data source for results. Useful fields to build from: `pitch_type`, `zone`, `action`, `result`, `pa_result`, `batting_team`, `balls_before`/`strikes_before` (for "what does he throw 0–2?"), `pitcher`, `game_id`. A *chase rate*, for instance, is swings where zone = OUT divided by pitches where zone = OUT.
+
+### 7.9 The team dashboard
+
+A second page next to the app, `dashboard/` ([`index.html`](../dashboard/index.html), [`dash.js`](../dashboard/dash.js), [`model.js`](../dashboard/model.js)), for people who should see the data but not record or open the sheet.
+
+- **The link.** Settings → Team dashboard asks the script for the **viewer key** (`{token, action: 'viewerKey'}`, so only a connected phone can) and builds `…/dashboard/#v=<deployment id>.<viewer key>`, the same shape as a setup link with its own name (`#view=` is the long form for Workspace addresses, [`buildViewerLink`](../js/connect.js)). A setup link is never read as a dashboard link, nor the reverse. The key is `VIEW_KEY` in the script properties, made the first time it's asked for; **Replace the link…** sends `renew: true`, which makes a new one, so every old dashboard link stops working while uploads carry on.
+- **Opening it.** The page validates the link as strictly as the app does, asks to confirm the **sheet code** (8.7) the first time, keeps address and key in `localStorage`, and takes the `#…` out of the address bar. Next time, the plain address opens it. If the script answers `bad_key` (the link was replaced), the page forgets it and says so.
+- **Reading.** One request, `{action: 'dashboard', key}`, answered by `dashboard_` in [`Code.gs`](../apps-script/Code.gs) **before** the lock and the token check: it only reads. It sends Pitches and PlateAppearances (only the columns the page uses, no deleted rows, no IDs or recorder names), all of PlayByPlay except the `video` formula, VideoTimes and the Videos links, each as `{cols, rows}`. Columns are found by header name. Nothing is cached on the device; the page reads again when it comes back to the screen after 5 minutes, or on ↻.
+- **Plays.** [`buildModel`](../dashboard/model.js) makes one list of plays. A game in PlayByPlay takes its plays from there (names, results, runs, base-running plays). Each of its plate appearances gets the app's pitches by matching the n-th plate appearance of each half-inning (same game ID), as the claude.ai dashboard does. A time from VideoTimes counts only if its code and batter still match the play (as in 7.7). Games only the app recorded, and live BP, use PlateAppearances, and pitches of an unfinished plate appearance count for pitch numbers only.
+- **Numbers.** AVG, OBP (`(H + BB + HBP) / (AB + BB + HBP + SF)`) and SLG from the plays; swing, whiff (misses per swing), chase (swings at pitches out of the zone, over pitches out of the zone), strike %, first-pitch strike % and CSW from the pitches, as defined in the claude.ai dashboard. Unit tests: [`tests/dashboard.test.js`](../tests/dashboard.test.js).
+- **The video.** YouTube's IFrame player from `youtube-nocookie.com`. Tapping a play seeks to its time; *Follow the video* checks the player's time every 0.7 s and marks the play on screen. **Watch** on a hitter's or pitcher's plate appearance opens that game at that moment. If YouTube can't load, or the owner blocks embedding, the page says so with a link to the video.
+- **Its own lockdown.** The page has its own Content-Security-Policy: its own files, `script.google.com` for data, and YouTube's script, frame and thumbnails. It sends the referrer as the site's origin only, because YouTube refuses to play embeds with no referrer. The app's own policy is unchanged. It imports the app's [`connect.js`](../js/connect.js) and [`game.js`](../js/game.js), which have no DOM or storage; the service worker doesn't cache the dashboard's own files.
 
 ---
 
@@ -929,11 +942,14 @@ All in [`css/app.css`](../css/app.css):
 |---|---|---|
 | The Apps Script address | Your Apps Script deployment; Settings on each connected phone; inside setup links | You, and everyone you've sent a link |
 | The token | Script properties; Settings on each connected phone; inside setup links | Same |
-| Pitch data | The sheet; each phone's own games | You; recorders see only their own games; viewers you share the sheet with |
+| Pitch data | The sheet; each phone's own games | You; recorders see only their own games; viewers you share the sheet with; anyone with the dashboard link (7.9) |
+| The viewer key | Script properties (`VIEW_KEY`); inside dashboard links; each device that opened one | Everyone you've sent a dashboard link. It only reads |
 
 **What someone with the link can do:** add rows to your sheet, or overwrite a row *if they know its ID*. They can also **download the Rosters tab** (player names and numbers, 3.2.1). They **cannot read** anything else through the script: uploads only answer "ok" or an error, never pitch data. They can't touch other tabs, other files or your Google account.
 
 **What someone without the link can do:** nothing. Without the token every upload is refused, and the address alone isn't enough.
+
+**What someone with a dashboard link can do:** read what the dashboard shows (7.9): every pitch, plate appearance and play-by-play row, and the video links. Not the Rosters tab, not the token, not any write. If one leaks, **Settings → Team dashboard → Replace the link…** and share the new one.
 
 **If a link or QR code leaks:** change the token (7.4). Every phone with the old one stops uploading (their pitches stay safe on those phones as pending), and you send a fresh link to the people who should have it.
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSetupLink, decodeConnect, encodeConnect, isValidScriptUrl, sheetCode, isSetupLinkHash } from '../js/connect.js';
+import { buildSetupLink, decodeConnect, encodeConnect, isValidScriptUrl, sheetCode, isSetupLinkHash,
+  buildViewerLink, decodeViewerLink, isViewerLinkHash } from '../js/connect.js';
 
 const ID = 'AKfycbx3Q9d_kL2mN8pR4sT6uV0wXyZ1aB5cD7eF9gH-iJkLmNoPqRsTuVwXyZ0123456789ab';
 const settings = { url: `https://script.google.com/macros/s/${ID}/exec`, token: '3f1c9a2e-7b4d-4c1e-9f0a-2b6d8e1c5a47' };
@@ -70,4 +71,47 @@ test('recognises setup links in the address', () => {
   assert.ok(isSetupLinkHash('#connect=abc'));
   assert.ok(!isSetupLinkHash(''));
   assert.ok(!isSetupLinkHash('#cx=1'));
+});
+
+const KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const DASH = `${APP}dashboard/`;
+
+test('dashboard links: short form, round trip, and their own name', () => {
+  const link = buildViewerLink(`${DASH}#old`, { url: settings.url, key: KEY });
+  assert.equal(link, `${DASH}#v=${ID}.${KEY}`);
+  for (const input of [link, `#v=${ID}.${KEY}`, `${ID}.${KEY}`, ` ${link} `]) {
+    assert.deepEqual(decodeViewerLink(input), { url: settings.url, key: KEY }, input);
+  }
+  assert.equal(isViewerLinkHash(`#v=${ID}.${KEY}`), true);
+  assert.equal(isSetupLinkHash(`#v=${ID}.${KEY}`), false, 'a dashboard link is not a setup link');
+});
+
+test('setup links and dashboard links are never taken for each other', () => {
+  const setup = buildSetupLink(APP, settings);
+  assert.equal(decodeViewerLink(setup), null);
+  assert.equal(decodeViewerLink(`${DASH}#c=${ID}.${KEY}`), null);
+  const view = buildViewerLink(DASH, { url: settings.url, key: KEY });
+  assert.equal(decodeConnect(view), null);
+});
+
+test('dashboard links for Workspace addresses use the long form', () => {
+  const url = `https://script.google.com/a/macros/club.example/s/${ID}/exec`;
+  const link = buildViewerLink(DASH, { url, key: KEY });
+  assert.match(link, /#view=[A-Za-z0-9_-]+$/);
+  assert.deepEqual(decodeViewerLink(link), { url, key: KEY });
+});
+
+test('dashboard links that point anywhere else are refused', () => {
+  const long = (data) => `${DASH}#view=${Buffer.from(JSON.stringify(data)).toString('base64url')}`;
+  for (const bad of [
+    long({ v: 1, u: 'https://evil.example/exec', k: KEY }),
+    long({ v: 1, u: `${settings.url}?x=1`, k: KEY }),
+    long({ v: 2, u: settings.url, k: KEY }),
+    long({ v: 1, u: settings.url, k: 'bad key!' }),
+    `${DASH}#view=not-base64-json`,
+    `${DASH}#v=${ID}`,
+    `${DASH}#v=short.${KEY}`,
+    'https://www.youtube.com/watch?v=abcDEF12345',
+    '', null,
+  ]) assert.equal(decodeViewerLink(bad), null, String(bad));
 });

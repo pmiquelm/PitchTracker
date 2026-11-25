@@ -79,6 +79,44 @@ export function buildSetupLink(baseUrl, settings) {
 
 export const isSetupLinkHash = (hash) => /(?:^|[#&])(c|connect)=/.test(hash || '');
 
+// Team dashboard links have the same two forms with their own names, so neither kind of
+// link can be taken for the other:
+//   https://<app>/dashboard/#v=<deployment id>.<viewer key>
+//   https://<app>/dashboard/#view=<base64url JSON {v, u, k}>   (non-standard addresses)
+// The viewer key only reads (see Code.gs), so a dashboard link can never add pitches.
+const VIEW_LONG = 'view=';
+const VIEW_SHORT = 'v=';
+
+export function buildViewerLink(dashboardUrl, { url, key }) {
+  const base = String(dashboardUrl).split('#')[0];
+  const m = STANDARD_URL.exec(url);
+  if (m && isValidToken(key)) return `${base}#${VIEW_SHORT}${m[1]}.${key}`;
+  return `${base}#${VIEW_LONG}${toBase64Url(JSON.stringify({ v: 1, u: url, k: key }))}`;
+}
+
+// Accepts a full dashboard link, its "#v=…" / "#view=…" fragment, or a bare code.
+// Returns { url, key } or null. Setup links (#c=, #connect=) are not dashboard links.
+export function decodeViewerLink(input) {
+  if (!input) return null;
+  const s = String(input).trim();
+  const long = /(?:^|[#&?])view=([^&\s#]+)/.exec(s);
+  if (long) {
+    try {
+      const data = JSON.parse(fromBase64Url(long[1]));
+      if (data.v !== 1 || !isValidScriptUrl(data.u) || !isValidToken(data.k)) return null;
+      return { url: data.u, key: data.k };
+    } catch {
+      return null;
+    }
+  }
+  const short = /(?:^|[#&?])v=([^&\s#]+)/.exec(s);
+  const m = SHORT_CODE.exec(short ? short[1] : s);
+  if (!m || (!short && /[#?]/.test(s))) return null;
+  return { url: `https://script.google.com/macros/s/${m[1]}/exec`, key: m[2] };
+}
+
+export const isViewerLinkHash = (hash) => /(?:^|[#&])(v|view)=/.test(hash || '');
+
 // A short, human-checkable code for a sheet ("K7Q-X2M"): the first 30 bits of a
 // SHA-256 of the script address. The owner's phone and the phone being connected
 // show the same code, so a link or QR code that points somewhere else is spotted

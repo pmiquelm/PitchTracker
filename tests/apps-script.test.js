@@ -50,10 +50,11 @@ function load(sheets = {}) {
     insertSheet(n) { const s = new FakeSheet(n); this.sheets.push(s); return s; },
   };
   const props = new Map([['TOKEN', 'tok']]);
+  let uuids = 0;
   const ctx = {
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },
     PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k), setProperty: (k, v) => props.set(k, v) }) },
-    Utilities: { getUuid: () => 'uuid', formatDate: () => '2026-11-17 10-00' },
+    Utilities: { getUuid: () => `0000000${++uuids}-1111-4222-8333-444455556666`, formatDate: () => '2026-11-17 10-00' },
     Logger: { log() {} },
     LockService: { getScriptLock: () => ({ waitLock() {}, tryLock: () => true, releaseLock() {} }) },
     ContentService: { createTextOutput: (t) => ({ setMimeType: () => JSON.parse(t) }), MimeType: { JSON: 'json' } },
@@ -63,7 +64,7 @@ function load(sheets = {}) {
     this.api = { setup, doPost, doGet, HEADERS, PA_HEADERS, youtubeId, columnLetter, pbpVideoFormula,
       videoToolGames, videoToolEvents, saveVideoLink, setVideoTime };`, ctx);
   const { HEADERS, PA_HEADERS, ...fns } = ctx.api;
-  return { ss, ...fns, HEADERS: [...HEADERS], PA_HEADERS: [...PA_HEADERS] }; // copied out of the sandbox for deepEqual
+  return { ss, props, ...fns, HEADERS: [...HEADERS], PA_HEADERS: [...PA_HEADERS] }; // copied out of the sandbox for deepEqual
 }
 
 const post = (api, body) => api.doPost({ postData: { contents: JSON.stringify({ token: 'tok', ...body }) } });
@@ -73,9 +74,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 7);
+  assert.equal(api.doGet().version, 8);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 7, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 8, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -193,7 +194,7 @@ test('rosters action reads filled blocks, needs the token, and never rewrites th
   const before = JSON.stringify(sheet.cells);
   const res = post(api, { action: 'rosters' });
   assert.equal(res.ok, true, res.error);
-  assert.equal(res.version, 7);
+  assert.equal(res.version, 8);
   assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
     { name: 'Tigers', players: [{ number: '07', name: 'Lopez' }, { number: '12', name: 'Kim' }] },
     { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },
@@ -300,7 +301,9 @@ test('the video formula looks rows up by game and event, and checks code and bat
   assert.equal(f, '={"video"; ARRAYFORMULA(IF(A2:A="",, IFERROR(IF('
     + 'XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!C2:C&"|"&VideoTimes!D2:D)=L2:L&"|"&J2:J, '
     + 'HYPERLINK(XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!F2:F), '
-    + 'XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!G2:G)), "⚠ check"))))}');
+    + 'TEXT(XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!E2:E)/86400, '
+    + 'IF(XLOOKUP(A2:A&"|"&C2:C, VideoTimes!A2:A&"|"&VideoTimes!B2:B, VideoTimes!E2:E)>=3600, "[h]:mm:ss", "[m]:ss"))), '
+    + '"⚠ check"))))}');
 });
 
 test('an existing video column is reused, and the formula follows the columns if they move', () => {
@@ -390,4 +393,72 @@ test('the tool page has no template-literal holes and its script parses', () => 
   const script = page.match(/<script>([\s\S]*?)<\/script>/)[1];
   assert.doesNotThrow(() => new vm.Script(script));
   assert.match(script, /var m = s.match\(\/\[\?&#\]t=\(\\d\+\)/, 'backslashes kept');
+});
+
+// ---- team dashboard ----
+const dash = (api, key) => JSON.parse(JSON.stringify(api.doPost({ postData: { contents: JSON.stringify({ action: 'dashboard', key }) } })));
+
+test('the viewer key needs the token, is made once, and renew replaces it', () => {
+  const api = load();
+  api.setup();
+  const bad = api.doPost({ postData: { contents: JSON.stringify({ token: 'no', action: 'viewerKey' }) } });
+  assert.equal(bad.ok, false);
+  assert.equal(api.props.get('VIEW_KEY'), undefined, 'nothing made without the token');
+  const a = post(api, { action: 'viewerKey' });
+  assert.deepEqual([a.ok, a.version], [true, 8]);
+  assert.match(a.key, /^[A-Za-z0-9_-]{20,}$/);
+  assert.notEqual(a.key, 'tok');
+  assert.equal(post(api, { action: 'viewerKey' }).key, a.key, 'asking again gives the same key');
+  const b = post(api, { action: 'viewerKey', renew: true });
+  assert.notEqual(b.key, a.key);
+  assert.equal(dash(api, a.key).ok, false, 'the old key stops working');
+  assert.equal(dash(api, b.key).ok, true);
+});
+
+test('the dashboard reads with the viewer key only, never the token', () => {
+  const api = load();
+  api.setup();
+  assert.equal(dash(api, 'anything').code, 'bad_key', 'no key made yet: nothing is readable');
+  const { key } = post(api, { action: 'viewerKey' });
+  assert.equal(dash(api, 'tok').code, 'bad_key', 'the upload token is not a viewer key');
+  assert.equal(dash(api, undefined).ok, false);
+  assert.equal(dash(api, '').ok, false);
+  // And the viewer key can't upload or read rosters
+  for (const body of [{ token: key, rows: [{ id: 'x' }] }, { token: key, action: 'rosters' }, { key, rows: [{ id: 'x' }] }]) {
+    assert.equal(api.doPost({ postData: { contents: JSON.stringify(body) } }).ok, false, JSON.stringify(body));
+  }
+  assert.equal(api.ss.getSheetByName('Pitches').cells.length, 1, 'nothing written');
+});
+
+test('the dashboard gets every tab by header name, without deleted rows or the video formula', () => {
+  const api = withPbp(pbpGame1());
+  api.setup();
+  post(api, {
+    rows: [{ id: 'p1', game_id: 'g', batter: 'A', pitch_type: 'FB', result: 'ball' },
+      { id: 'p2', game_id: 'g', batter: 'A', deleted: true }, { id: 'p3', batter: 'no game' }],
+    pas: [{ id: 'a1', game_id: 'g', batter: 'A', result: 'K', session_type: 'bp' }],
+  });
+  api.setVideoTime(G1, 2, 75, LINK);
+  api.saveVideoLink(G1, LINK);
+  const { key } = post(api, { action: 'viewerKey' });
+  const d = dash(api, key);
+  assert.equal(d.ok, true);
+  const objects = (t) => t.rows.map((r) => Object.fromEntries(t.cols.map((c, i) => [c, r[i]])));
+  const pitches = objects(d.pitches);
+  assert.deepEqual(pitches.map((p) => [p.game_id, p.batter, p.pitch_type, p.result]), [['g', 'A', 'FB', 'ball']]);
+  assert.ok(!d.pitches.cols.includes('id') && !d.pitches.cols.includes('recorded_by'), 'only what the dashboard shows');
+  assert.deepEqual(objects(d.pas).map((p) => [p.batter, p.result, p.session_type]), [['A', 'K', 'bp']]);
+  assert.deepEqual(d.pbp.cols, PBP_HEADERS, 'all PlayByPlay columns but video');
+  assert.equal(d.pbp.rows.length, 4);
+  assert.deepEqual(objects(d.videoTimes).map((v) => [v.game_id, v.event_seq, v.seconds]), [[G1, 2, 75]]);
+  assert.deepEqual(d.videos, { [G1]: 'https://www.youtube.com/watch?v=abcDEF12345' });
+});
+
+test('the dashboard works on a sheet with no PlayByPlay or video tabs', () => {
+  const api = load();
+  api.setup();
+  const { key } = post(api, { action: 'viewerKey' });
+  const d = dash(api, key);
+  assert.equal(d.ok, true);
+  assert.deepEqual([d.pbp.rows, d.videoTimes.rows, d.pitches.rows, d.videos], [[], [], [], {}]);
 });
