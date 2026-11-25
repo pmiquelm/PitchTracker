@@ -202,7 +202,7 @@ test('sheet columns match the Apps Script headers', () => {
   const gs = readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8');
   const list = (name) => JSON.parse(gs.match(new RegExp(`const ${name} = (\\[[\\s\\S]*?\\]);`))[1].replace(/'/g, '"').replace(/,\s*\]/, ']'));
   assert.deepEqual(list('HEADERS'), [...PITCH_COLUMNS, 'synced_at']);
-  assert.deepEqual(list('PA_HEADERS'), [...PA_COLUMNS, 'synced_at']);
+  assert.deepEqual(list('PA_HEADERS'), [...PA_COLUMNS, 'synced_at', 'video']); // + sheet-only columns
 });
 
 // ---- Live BP ----

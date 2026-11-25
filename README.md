@@ -52,7 +52,7 @@ After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
 2. Delete the sample code and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs). Save.
 3. Choose the **`setup`** function in the toolbar and click **Run**. Approve the permissions: it's your own script, so click
    *Advanced → Go to project* if Google warns you.
-   This creates the **Pitches**, **PlateAppearances**, **Summary** and **Rosters** tabs. Open **Execution log** and copy the **TOKEN**.
+   This creates the **Pitches**, **PlateAppearances**, **Summary** and **Rosters** tabs (plus **Videos** later, if you use video timestamps). Open **Execution log** and copy the **TOKEN**.
 4. **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as*: **Me**, *Who has access*: **Anyone**. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
 5. Open the app's URL in **Safari** → **Settings**, paste the URL and token, **Save**, then **Test connection**.
 
@@ -176,6 +176,26 @@ Live BP needs script version 6 or later: until the new script is deployed, rows 
   Add a filter `deleted = false`, and a filter control on `session_type` to show games, live BP or both.
   Add the **PlateAppearances** tab as a second source for results.
 
+### 8. Video timestamps (optional)
+
+If a game is on YouTube, each at-bat can get a link to the moment it starts. In the sheet, on a computer:
+**PitchTracker → Video timestamps** (the menu appears a few seconds after the sheet opens). A window opens
+with the video on the left and the game's at-bats on the right, in order.
+
+1. Pick the game and paste its YouTube link (it's kept in the **Videos** tab, so next time it's filled in).
+2. Play or skip to where the next batter steps in and press **Enter**. The highlighted at-bat gets the
+   video's current time and the next one is highlighted.
+3. The time goes into the at-bat's `video` cell in PlateAppearances, as a link: `41:12` opens YouTube at that moment.
+
+Keys: **Space** play / pause, **← →** 5 s, **J L** 10 s, **, .** 1 s, **↑ ↓** pick another at-bat,
+**Backspace** clear its time. Pressing **Enter** on an at-bat that has a time replaces it, and clicking one jumps
+the video there. If a video won't play in the window (some owners block it), keep it open on YouTube, right-click
+the video → *Copy video URL at current time*, and paste that into the box under the video: it fills the
+highlighted at-bat the same way. Pasting a link to a different video (part 2 of a game) makes it the game's link.
+
+The first time, Google asks you to approve the script again ("display content in the spreadsheet"). Do it as soon as
+the new script is deployed: until then Google may refuse uploads too (the phones keep everything and retry).
+
 ## Sheet columns
 
 **Pitches** (one row per pitch):
@@ -217,6 +237,7 @@ Live BP needs script version 6 or later: until the new script is deployed, rows 
 | `fielder` | `P` `C` `1B` `2B` `3B` `SS` `LF` `CF` `RF`, or empty if skipped |
 | `outs_on_play` | outs the app counted for the play |
 | `deleted`, `recorded_by`, `session_type`, `synced_at` | as above |
+| `video` | filled in the sheet, never by the app: a link to the at-bat in the game's video ([Video timestamps](#8-video-timestamps-optional)). Uploads never change it |
 
 ## Development
 

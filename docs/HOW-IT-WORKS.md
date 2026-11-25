@@ -705,7 +705,18 @@ Ten formulas ([line 80](../apps-script/Code.gs#L80)) using Sheets' `QUERY` funct
 
 `where … = false` leaves out undone rows. If columns are ever reordered, these letters must be updated (16.2). The Summary tab is rebuilt from scratch every time the layout is updated, so anything typed into it by hand is lost; build your own tables in a tab of your own.
 
-### 7.7 Dashboards
+### 7.7 Video timestamps
+
+A second, separate use of the same script: a window **inside the sheet**, used on a computer, to give each plate appearance a link to its moment in the game's YouTube video.
+
+- **The menu.** [`onOpen`](../apps-script/Code.gs) is a *simple trigger*: Google runs it every time the sheet is opened, and it adds **PitchTracker → Video timestamps**. That runs `showVideoTool`, which hands Google a web page (`VIDEO_TOOL_HTML`, kept inside `Code.gs` because the deploy ships only that file, 16.4). Google shows it in a floating window over the sheet (a *modeless dialog*, `HtmlService`), in its own sandboxed frame. The app's Content-Security-Policy doesn't apply here: this page is served by Google, not GitHub Pages.
+- **The video.** The page embeds YouTube's official player ([IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)). The page can ask it the current second (`getCurrentTime`) and tell it to play, pause or jump, which is all the keys do. Clicking inside the video gives it the keyboard, so the page takes the keyboard back whenever the player changes state.
+- **Talking to the script.** The page calls four functions in `Code.gs` through `google.script.run`, which runs them as the person at the computer (an editor of the sheet; no token involved): `videoToolGames` (games with at-bats, newest first), `videoToolPas` (one game's at-bats in `pa_number` order, undone ones left out), `saveVideoLink` (the game's link, into the **Videos** tab) and `setVideoTime`. Each takes the same lock as `doPost` and brings the layout up to date first, as an upload would, so rows can't move under it.
+- **One stamp.** `setVideoTime` finds the row by its `id`, as `upsert` does, and writes `=HYPERLINK("https://www.youtube.com/watch?v=<id>&t=<seconds>s", "41:12")` into its `video` cell. The video id is checked to be exactly 11 letters, digits, `-` or `_` before it goes into the formula ([`youtubeId`](../apps-script/Code.gs)), and the seconds are a whole number. The page marks the row *saving…* and only shows the time once the sheet confirms it; if the save fails it puts the old value back and returns to that at-bat.
+- **Why uploads can't overwrite it.** `video` comes after `synced_at`, and `upsert` writes each row only up to `synced_at`. Columns after it are *sheet-only*: nothing the app sends reaches them. When the layout changes, `prepareSheet` moves rows with their formulas, so the links survive.
+- **Permission.** Showing a window needs a permission the upload part didn't (`script.container.ui`, *display content in the spreadsheet*). Google asks the sheet's owner to approve the script again after the first deploy that has it. Until then it may refuse to run the script at all, uploads included; the phones keep their rows pending and retry (13), and the deploy's version check can fail. Approving once (open the sheet, click the menu) fixes both.
+
+### 7.8 Dashboards
 
 Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets → Pitches**. Add a filter `deleted = false`, and a control on `session_type` (games, live BP or both). Add **PlateAppearances** as a second data source for results. Useful fields to build from: `pitch_type`, `zone`, `action`, `result`, `pa_result`, `batting_team`, `balls_before`/`strikes_before` (for "what does he throw 0–2?"), `pitcher`, `game_id`. A *chase rate*, for instance, is swings where zone = OUT divided by pitches where zone = OUT.
 
@@ -1083,6 +1094,7 @@ flowchart LR
    - fix the column letters in the Summary `QUERY` formulas ([line 78](../apps-script/Code.gs#L78)) and in the comment above them (7.6);
    - add the column to `TEXT_COLUMNS` if it holds codes or numbers that must stay text;
    - you **don't** need to migrate existing sheets: the first upload after the deploy does it (16.5). Just never write code that relies on column positions in an old sheet.
+   - a column the *sheet* fills in (like `video`, 7.7) goes **after** `synced_at` in `PA_HEADERS`, and only there: uploads stop at `synced_at`. The test then compares the app's list with the script's minus `synced_at` and the sheet-only columns.
 4. **If the app needs the new script** (it sends something an older script would ignore or get wrong), raise `SCRIPT_VERSION` in [`js/sync.js`](../js/sync.js#L14) to the new `VERSION`, and bump `VERSION` in `sw.js` because `sync.js` changed. For a feature an old script simply can't serve, but which shouldn't block uploads, use a separate minimum, as rosters do (`ROSTER_SCRIPT_VERSION`, 7.5).
 5. **Run `npm test`.** [`tests/apps-script.test.js`](../tests/apps-script.test.js) runs the real `Code.gs` (16.3).
 6. **Open a pull request and merge it into `main`.** The merge ships both halves: GitHub Pages serves the app files, and the workflow deploys the script (16.4).
