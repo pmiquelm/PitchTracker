@@ -94,14 +94,6 @@ function ourTeam(teams) {
   return teams.slice().sort((a, b) => inGames(b) - inGames(a))[0];
 }
 
-function fmtTime(sec) {
-  const s = Math.floor(sec);
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, '0');
-  return hh ? `${hh}:${String(mm).padStart(2, '0')}:${ss}` : `${mm}:${ss}`;
-}
-
 function fmtDate(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-').map(Number);
@@ -340,7 +332,8 @@ function renderGames(main) {
   const game = games.find((g) => g.id === ui.game);
 
   const pick = h('select', { class: 'grow', 'aria-label': 'Game', onchange: (e) => { ui.game = e.target.value; render(); } },
-    ...games.map((g) => h('option', { value: g.id, selected: g.id === ui.game, text: gameLabel(g) })));
+    // Oldest first, in date order (doubleheaders by game number).
+    ...games.slice().reverse().map((g) => h('option', { value: g.id, selected: g.id === ui.game, text: gameLabel(g) })));
   main.append(h('div', { class: 'controls' }, pick));
 
   const head = h('section', { class: 'game-head' },
@@ -461,7 +454,7 @@ function drawWpChart() {
       h('div', { text: p.desc }),
       p.pitches.length ? h('div', {}, pitchTiles(p.pitches)) : null,
       h('div', { class: 'muted', text: `${team} ${Math.round(q.v)}% · WPA ${sgn(p.wp.wpa)} for ${p.team} · leverage ${(p.wp.li ?? 0).toFixed(1)}` }),
-      p.video !== null ? h('div', { class: 'tip-v', text: `▶ Tap to play from ${fmtTime(p.video)}` }) : null,
+      p.video !== null ? h('div', { class: 'tip-v', text: '▶ Tap to play it' }) : null,
     ].filter(Boolean));
     tip.hidden = false;
     const left = Math.min(x(q.i) * scale + 12, el.clientWidth - 250);
@@ -487,7 +480,7 @@ function bigPlays(game) {
     h('div', { class: 'scroll' }, h('table', { class: 'stats' },
       h('thead', {}, h('tr', {}, ...['Play', 'Inning', 'Batter', 'Score before', 'Pitches', 'Leverage', 'WPA', 'Error by'].map((t) => h('th', { text: t })))),
       h('tbody', {}, ...rows.map((p) => h('tr', {},
-        h('th', { class: 'wrap' }, p.video !== null ? h('button', { class: 'link', title: `Play from ${fmtTime(p.video)}`, onclick: () => seek(p.video, true), text: `▶ ${p.desc}` }) : p.desc),
+        h('th', { class: 'wrap' }, p.video !== null ? h('button', { class: 'link', title: 'Play it in the video', onclick: () => seek(p.video, true), text: `▶ ${p.desc}` }) : p.desc),
         h('td', { text: halfName(p) }), h('td', { class: 'left', text: p.batter }),
         h('td', { text: p.awayBefore !== null ? `${p.awayBefore}–${p.homeBefore}` : '' }),
         h('td', {}, pitchTiles(p.pitches)), h('td', { text: (p.wp.li ?? 0).toFixed(1) }), wpaCell(p.wp.wpa),
@@ -578,10 +571,10 @@ function playRow(p, i) {
     class: `play${p.isPa ? '' : ' between'}${timed ? ' timed' : ''}`,
     'data-i': i,
     'data-sec': timed ? p.video : null,
-    title: timed ? `Play from ${fmtTime(p.video)}` : null,
+    title: timed ? 'Play it in the video' : null,
     onclick: timed ? () => seek(p.video, true) : null,
   },
-  h('span', { class: 't', text: timed ? `▶ ${fmtTime(p.video)}` : '' }),
+  h('span', { class: 't', 'aria-hidden': 'true', text: timed ? '▶' : '' }),
   h('span', { class: 'who' },
     h('strong', { text: p.isPa ? p.batter || 'Batter' : p.desc || p.code }),
     p.isPa ? h('span', { class: 'desc', text: p.desc }) : null,
@@ -721,8 +714,16 @@ function highlight(sec, scroll) {
   cur.classList.add('cur');
   if (scroll) {
     const list = document.getElementById('plays');
-    const top = cur.offsetTop - list.offsetTop;
-    if (list.scrollHeight > list.clientHeight + 4) list.scrollTo({ top: top - list.clientHeight / 3, behavior: 'smooth' });
+    if (list.scrollHeight > list.clientHeight + 4) {
+      // Wide screens: the list scrolls on its own, beside the video.
+      list.scrollTo({ top: cur.offsetTop - list.offsetTop - list.clientHeight / 3, behavior: 'smooth' });
+    } else {
+      // Phones: the page scrolls, under the header and the video that stick at the top. Keep the
+      // play just below the video when it would be hidden under it or off the bottom of the screen.
+      const covered = (document.querySelector('.video-wrap')?.getBoundingClientRect().bottom ?? 0) + 8;
+      const r = cur.getBoundingClientRect();
+      if (r.top < covered || r.bottom > window.innerHeight) window.scrollBy({ top: r.top - covered, behavior: 'smooth' });
+    }
   }
 }
 
@@ -1127,7 +1128,7 @@ function paList(plays, role) {
           h('span', { class: 'desc', text: batter ? (p.pitcher ? `vs ${p.pitcher}` : '') : p.batter }),
           p.isPa && p.desc && p.desc !== OUTCOME_LABELS[p.outcome] ? h('span', { class: 'muted small', text: p.desc }) : null),
         pitchTiles(p.pitches),
-        p.video !== null ? h('button', { class: 'watch', onclick: () => watch(p), text: `▶ Watch ${fmtTime(p.video)}` }) : h('span', { class: 'watch-none' })))))));
+        p.video !== null ? h('button', { class: 'watch', onclick: () => watch(p), text: '▶ Watch' }) : h('span', { class: 'watch-none' })))))));
 }
 
 boot();
