@@ -74,9 +74,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 8);
+  assert.equal(api.doGet().version, 9);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 8, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 9, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -194,7 +194,7 @@ test('rosters action reads filled blocks, needs the token, and never rewrites th
   const before = JSON.stringify(sheet.cells);
   const res = post(api, { action: 'rosters' });
   assert.equal(res.ok, true, res.error);
-  assert.equal(res.version, 8);
+  assert.equal(res.version, 9);
   assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
     { name: 'Tigers', players: [{ number: '07', name: 'Lopez' }, { number: '12', name: 'Kim' }] },
     { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },
@@ -330,7 +330,7 @@ test('the tool lists games newest first and a game\'s plays in order, between-pi
   assert.deepEqual(d.events.map((e) => [e.seq, e.code, e.isPa, e.video, e.stale]),
     [['1', 'K', true, null, null], ['2', '1B', true, null, null], ['3', 'SB', false, 30, null], ['4', 'GO', true, null, null]]);
   assert.deepEqual([d.events[2].desc, d.events[2].half, d.link], ['Leidinger M steals 2B', 'top', 'https://www.youtube.com/watch?v=abcDEF12345']);
-  assert.deepEqual(api.videoToolEvents('old').events.map((e) => e.seq), ['1', '2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(api.videoToolEvents('old'))).events.map((e) => e.seq), ['1', '2']);
 });
 
 test('regenerating PlayByPlay keeps times; a play that changed is flagged, not linked', () => {
@@ -343,14 +343,27 @@ test('regenerating PlayByPlay keeps times; a play that changed is flagged, not l
   fixed.splice(1, 0, pbpRow(G1, '2026-04-11', 2, 'top', 'Leidinger Max', 'WP', 'Wild pitch', 0));
   fixed.forEach((r, i) => { r[2] = i + 1; });
   fixed.forEach((r, i) => { sheet.cells[i + 1] = r; });
-  const d = api.videoToolEvents(G1);
+  const d = JSON.parse(JSON.stringify(api.videoToolEvents(G1)));
   assert.deepEqual(d.events.map((e) => [e.code, e.video, e.stale]),
-    [['K', null, null], ['WP', null, 50], ['1B', null, null], ['SB', null, 90], ['GO', null, null]]);
+    [['K', null, null], ['1B', null, null], ['WP', null, 50], ['SB', null, 90], ['GO', null, null]], 'the wild pitch was during the single');
   assert.equal(api.videoToolGames()[0].stamped, 0);
   assert.match(sheet.cells[0][40], /^=\{"video"/, 'the header formula is still there');
   // Re-stamping the WP fixes its row
   api.setVideoTime(G1, 2, 52, LINK);
-  assert.deepEqual(api.videoToolEvents(G1).events[1].video, 52);
+  assert.deepEqual(api.videoToolEvents(G1).events[2].video, 52);
+});
+
+test('the tool lists plays in at-bat order: an at-bat, then what happened during it', () => {
+  // John steals while Bob is batting, then Bob flies out: the scoresheet numbers the steal first.
+  const api = withPbp([
+    pbpRow(G1, '2026-04-11', 1, 'top', 'John', '1B', 'Single'),
+    pbpRow(G1, '2026-04-11', 2, 'top', 'Bob', 'SB', 'John steals 2B', 0),
+    pbpRow(G1, '2026-04-11', 3, 'top', 'Bob', 'WP', 'Wild pitch; John to 3B', 0),
+    pbpRow(G1, '2026-04-11', 4, 'top', 'Bob', 'FO', 'Fly out F8'),
+    pbpRow(G1, '2026-04-11', 5, 'top', 'Cal', 'PK', 'John picked off 3B', 0), // the third out: stays at the end
+    pbpRow(G1, '2026-04-11', 6, 'bottom', 'Dan', 'K', 'Strikeout'),
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(api.videoToolEvents(G1))).events.map((e) => e.code), ['1B', 'FO', 'SB', 'WP', 'PK', 'K']);
 });
 
 test('the tool explains a missing PlayByPlay tab', () => {
@@ -405,7 +418,7 @@ test('the viewer key needs the token, is made once, and renew replaces it', () =
   assert.equal(bad.ok, false);
   assert.equal(api.props.get('VIEW_KEY'), undefined, 'nothing made without the token');
   const a = post(api, { action: 'viewerKey' });
-  assert.deepEqual([a.ok, a.version], [true, 8]);
+  assert.deepEqual([a.ok, a.version], [true, 9]);
   assert.match(a.key, /^[A-Za-z0-9_-]{20,}$/);
   assert.notEqual(a.key, 'tok');
   assert.equal(post(api, { action: 'viewerKey' }).key, a.key, 'asking again gives the same key');

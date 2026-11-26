@@ -1,7 +1,7 @@
 // The team dashboard's numbers (dashboard/model.js), from data shaped like the script sends it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, matchups } from '../dashboard/model.js';
+import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, matchups, atBatOrder } from '../dashboard/model.js';
 
 const tab = (cols, rows) => ({ cols, rows: rows.map((r) => cols.map((c) => r[c] ?? '')) });
 const PBP_COLS = ['game_id', 'date', 'event_seq', 'inning', 'half', 'batting_team', 'fielding_team', 'batter', 'pitcher',
@@ -61,13 +61,14 @@ function sample() {
 test('scoresheet games: plays in order, app pitches matched by half-inning order, checked video times', () => {
   const m = buildModel(sample());
   const plays = m.plays.filter((p) => p.game === G);
-  assert.deepEqual(plays.map((p) => [p.seq, p.code, p.isPa]), [[1, 'K', true], [2, '1B', true], [3, 'SB', false], [4, 'HR', true], [5, 'BB', true], [6, 'GO', true]]);
+  // At-bat order: the steal (event 3) happened during the home run's at-bat (event 4), so it comes after it.
+  assert.deepEqual(plays.map((p) => [p.seq, p.code, p.isPa]), [[1, 'K', true], [2, '1B', true], [4, 'HR', true], [3, 'SB', false], [5, 'BB', true], [6, 'GO', true]]);
   // Names come from the scoresheet; pitches from the app, sorted
   assert.equal(plays[0].batter, 'Tournoux Syan');
   assert.deepEqual(plays[0].pitches.map((p) => p.result), ['called_strike', 'swinging_strike', 'called_strike']);
   assert.deepEqual(plays[1].pitches.map((p) => p.result), ['in_play']);
-  assert.deepEqual(plays[3].pitches, [], 'the app had no third plate appearance');
-  assert.deepEqual(plays.map((p) => p.video), [1292, null, null, 0, null, null]);
+  assert.deepEqual(plays[2].pitches, [], 'the app had no third plate appearance');
+  assert.deepEqual(plays.map((p) => p.video), [1292, null, 0, null, null, null]);
   const g = m.games.find((x) => x.id === G);
   assert.deepEqual([g.away, g.home, g.score, g.timed, g.video, g.source], ['Skylarks', 'Flamingos', { away: 2, home: 1 }, 2,
     'https://www.youtube.com/watch?v=VAInWKzHcfA', 'pbp']);
@@ -166,4 +167,10 @@ test('game by game in date order, the count grid and matchups', () => {
   assert.deepEqual(mu.map((r) => [r.pitcher, r.batter, r.line.pa]).slice(0, 2), [['Ace', 'Leidinger Max', 1], ['Ace', 'Tournoux Syan', 1]]);
   assert.equal(m.plays.find((p) => p.seq === 1 && p.half === 'top').leadoff, true);
   assert.equal(m.plays.find((p) => p.seq === 5).leadoff, true, 'first of the bottom half');
+});
+
+test('at-bat order: each plate appearance, then the plays during it; a third-out pickoff stays last', () => {
+  const p = (seq, code, isPa, half = 'top') => ({ seq, code, isPa, inning: 1, half });
+  const list = [p(1, '1B', true), p(2, 'SB', false), p(3, 'WP', false), p(4, 'FO', true), p(5, 'PK', false), p(6, 'K', true, 'bottom')];
+  assert.deepEqual(atBatOrder(list).map((x) => x.code), ['1B', 'FO', 'SB', 'WP', 'PK', 'K']);
 });

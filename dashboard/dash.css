@@ -157,7 +157,7 @@ button.icon { background: transparent; color: inherit; border-color: rgba(255, 2
   background: var(--accent-soft); color: var(--text);
 }
 .play, .pa {
-  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center;
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center;
   width: 100%; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
   background: transparent; text-align: left; color: inherit;
 }
@@ -170,11 +170,13 @@ button.play:hover { background: var(--accent-soft); }
 .who strong, .who span { overflow: hidden; text-overflow: ellipsis; }
 .desc { font-size: .9rem; }
 .pa { grid-template-columns: 64px minmax(0, 1fr) auto auto; }
+.play .t { text-align: center; }
 .pa-inn { white-space: nowrap; }
 .watch { font-size: .85rem; padding: 4px 8px; white-space: nowrap; color: var(--accent); }
 .watch-none { width: 0; }
 @media (max-width: 560px) {
-  .play, .pa { grid-template-columns: 52px minmax(0, 1fr); }
+  .play { grid-template-columns: 18px minmax(0, 1fr); }
+  .pa { grid-template-columns: 52px minmax(0, 1fr); }
   .play .tiles, .pa .tiles { grid-column: 2; }
   .pa .watch, .pa .watch-none { grid-column: 2; justify-self: start; }
 }
