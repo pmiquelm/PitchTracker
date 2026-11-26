@@ -1,10 +1,10 @@
 # How PitchTracker works
 
-*A guide that starts from zero and ends at every line that matters. Written 16 November 2026, updated 18 November 2026.*
+*A guide that starts from zero and ends at every line that matters. Written 16 November 2026, reorganized 26 November 2026.*
 
-**Reading the code:** every file and function named in this guide links to it in this repository. Links with a line number open the file with that line highlighted. Line numbers are as of 18 November 2026 and can drift a few lines as the code changes. Section 15 has the full file list.
+**Reading the code:** every file and function named in this guide links to it in this repository. Some links point at a line number; those can drift a few lines as the code changes. Section 16.4 has the full file list.
 
-**How to read this:** sections 1–3 are for anyone; you need no programming background. Sections 4 onwards go deep into one part each and can be read in any order. If you only want to know "can I lose data?", read sections 1, 5.1 and 13. If you're about to change the Google script, read section 16.
+**How to read this:** sections 1–3 are for anyone; you need no programming background. Sections 4 onwards go deep into one part each and can be read in any order. If you only want to know "can I lose data?", read sections 1, 5.1 and 14. For who can record, read or deploy, and how to take that back, read section 13. If you're about to change the Google script, read section 17.
 
 ---
 
@@ -18,41 +18,44 @@
 6. [Sync: getting pitches to the sheet](#6-sync-getting-pitches-to-the-sheet)
 7. [The Google side: Apps Script and the sheet](#7-the-google-side-apps-script-and-the-sheet)
 8. [Setup links](#8-setup-links)
-9. [Backups and CSV](#9-backups-and-csv)
-10. [Working offline: the service worker](#10-working-offline-the-service-worker)
-11. [The screens and the layout](#11-the-screens-and-the-layout)
-12. [Security and privacy](#12-security-and-privacy)
-13. [What happens when things go wrong](#13-what-happens-when-things-go-wrong)
-14. [Limits and things not built yet](#14-limits-and-things-not-built-yet)
-15. [Testing, changing and releasing](#15-testing-changing-and-releasing)
-16. [Editing the Google script: how the build works](#16-editing-the-google-script-how-the-build-works)
-17. [Glossary](#17-glossary)
+9. [The team dashboard](#9-the-team-dashboard)
+10. [Backups and CSV](#10-backups-and-csv)
+11. [Working offline: the service worker](#11-working-offline-the-service-worker)
+12. [The screens and the layout](#12-the-screens-and-the-layout)
+13. [Keys, tokens and sign-ins](#13-keys-tokens-and-sign-ins)
+14. [What happens when things go wrong](#14-what-happens-when-things-go-wrong)
+15. [Limits and things not built yet](#15-limits-and-things-not-built-yet)
+16. [Testing, changing and releasing](#16-testing-changing-and-releasing)
+17. [Editing the Google script: how the build works](#17-editing-the-google-script-how-the-build-works)
+18. [Glossary](#18-glossary)
 
 ---
 
 ## 1. The big picture
 
-PitchTracker is a website that behaves like an app. You open it once in Safari, add it to the Home Screen, and from then on it opens full-screen from its own icon, works with no signal, and keeps every pitch on the phone until it has safely reached a Google Sheet.
+PitchTracker is a website that behaves like an app. You open it once in Safari, add it to the Home Screen, and from then on it opens full-screen from its own icon, works with no signal, and keeps every pitch on the phone until it has safely reached a Google Sheet. A second page, the **team dashboard**, shows everything in the sheet (games with their videos, hitters, pitchers, win probability, leaderboards) to anyone you send its link, without letting them change anything.
 
-It is about 2,150 lines of plain JavaScript plus about 370 lines of HTML and CSS, and about 275 lines of Google Apps Script. There is **no server of our own**: nothing is rented, nothing has to be kept switched on, and nothing costs money. There are no outside libraries loaded from anywhere; everything the app runs is in this repository (one small QR code library is copied in and pinned, 8.7).
+There is **no server of our own**: nothing is rented, nothing has to be kept switched on, and nothing costs money. Both pages are plain files; the only program that runs somewhere else is a Google Apps Script attached to the sheet. No outside libraries are loaded from anywhere; everything the pages run is in this repository (one small QR code library is copied in and pinned, 8.7). The dashboard embeds YouTube's player for the game videos.
 
 ### 1.1 The moving parts
 
 | Part | What it is | What it does |
 |---|---|---|
-| **The phone** | An iPhone, iPad or Android phone running Safari or Chrome | Runs the app. All the logic happens here, not on a server |
-| **The app files** | [`index.html`](../index.html), [`css/app.css`](../css/app.css), the files in [`js/`](../js), the icons | The program itself. Downloaded once, then kept on the phone |
-| **GitHub Pages** | GitHub's free hosting for static files | Hands out the app files at `https://pmiquelm.github.io/PitchTracker/`. It never sees any pitch data |
+| **The phone** | An iPhone, iPad or Android phone running Safari or Chrome | Runs the app. All the recording logic happens here, not on a server |
+| **The app files** | [`index.html`](../index.html), [`css/app.css`](../css/app.css), the files in [`js/`](../js), the icons | The recording app. Downloaded once, then kept on the phone |
+| **The dashboard files** | [`dashboard/`](../dashboard) | The read-only team dashboard (section 9). Loaded fresh on every visit |
+| **GitHub Pages** | GitHub's free hosting for static files | Hands out both pages at `https://pmiquelm.github.io/PitchTracker/` and `…/dashboard/`. It never sees any data or key |
 | **IndexedDB** | A small database built into every browser | Stores games, lineups and every pitch on the phone ([`js/db.js`](../js/db.js)) |
 | **The service worker** | A small script the browser keeps beside the app ([`sw.js`](../sw.js)) | Keeps a copy of the app files so the app opens with no signal |
-| **Apps Script** | Google's way of attaching a small program to a Google Sheet ([`apps-script/Code.gs`](../apps-script/Code.gs)) | Receives pitches and plate appearances from phones and writes them into the sheet |
-| **The Google Sheet** | A normal spreadsheet in your Google Drive | Holds one row per pitch (**Pitches**) and one per plate appearance (**PlateAppearances**), plus a **Summary** of starter tables and the team **Rosters** you type in. People view it, filter it, chart it |
-| **GitHub Actions** (optional) | GitHub's free automation | Copies `Code.gs` into your Apps Script project and redeploys it whenever it changes on `main` (section 16) |
-| **Looker Studio** (optional) | Google's free dashboard tool | Turns the sheet into a dashboard |
+| **Apps Script** | Google's way of attaching a small program to a Google Sheet ([`apps-script/Code.gs`](../apps-script/Code.gs)) | Receives pitches and plate appearances, hands out rosters and the dashboard's data, and runs the video timestamps window (section 7) |
+| **The Google Sheet** | A normal spreadsheet in your Google Drive | **Pitches** (one row per pitch), **PlateAppearances**, the **Rosters** you type in and a **Summary**; and, from scoresheets transcribed outside the app, **PlayByPlay** with its **VideoTimes** and **Videos** |
+| **YouTube** | Where the game videos are | Played inside the video timestamps window and the dashboard |
+| **GitHub Actions** (optional) | GitHub's free automation | Deploys `Code.gs` whenever it changes on `main` (section 17) |
+| **Other dashboards** (optional) | Looker Studio, the claude.ai dashboard | Read the sheet directly (9.10) |
 
 ### 1.2 The life of a pitch, in one paragraph
 
-You tap **Fastball**, **In** and **Take**. The phone works out that this was a called strike, updates the count, and **writes the pitch into its own database before showing you anything**. A fraction of a second later, if there is signal, it sends that pitch to your Apps Script address on Google's servers. The script checks a password-like token, finds or adds the right row in the **Pitches** tab, and answers "ok". Only then does the phone mark the pitch as uploaded. If there is no signal, the pitch waits on the phone and goes up on its own the next time there is. When the ball is put in play, big outcome pads (hit, out, fielder's choice, sac, error, then the detail and the fielder) replace the pitch pads; that result goes up the same way, into the **PlateAppearances** tab.
+You tap **Fastball**, **In** and **Take**. The phone works out that this was a called strike, updates the count, and **writes the pitch into its own database before showing you anything**. A fraction of a second later, if there is signal, it sends that pitch to your Apps Script address on Google's servers. The script checks the **upload token** sent with it (13.3), finds or adds the right row in the **Pitches** tab, and answers "ok". Only then does the phone mark the pitch as uploaded. If there is no signal, the pitch waits on the phone and goes up on its own the next time there is. When the ball is put in play, big outcome pads (hit, out, fielder's choice, sac, error, then the detail and the fielder) replace the pitch pads; that result goes up the same way, into the **PlateAppearances** tab.
 
 ```mermaid
 flowchart LR
@@ -61,10 +64,12 @@ flowchart LR
     DB -->|2. pitches not yet uploaded| SYNC[Sync queue]
     SW[Service worker] -.->|serves app files offline| UI
   end
-  GH[GitHub Pages] -.->|app files, once| SW
-  SYNC -->|3. HTTPS POST| AS[Apps Script web app]
+  GH[GitHub Pages] -.->|app and dashboard files| SW
+  SYNC -->|3. HTTPS POST + upload token| AS[Apps Script web app]
   AS -->|4. insert / update row| SHEET[(Google Sheet)]
-  SHEET --> VIEW[Viewers, Looker Studio]
+  DASH[Team dashboard] -->|POST + viewer key| AS
+  AS -->|reads| SHEET
+  YT[YouTube] -.->|game video| DASH
 ```
 
 ### 1.3 Who can do what
@@ -72,9 +77,11 @@ flowchart LR
 | Person | Needs | Can |
 |---|---|---|
 | **You (the owner)** | The Google account that owns the sheet | Everything: record, see all data, change the script, cut off access |
-| **A recorder** | The setup link (section 8) | Add pitches to your sheet from their phone, and download the team rosters. Cannot read anything else in the sheet unless you also share it |
-| **A viewer** | The sheet shared with them (view only) | Read the data and dashboards. Never touches the app |
-| **The team** | The team dashboard link (7.9) | See every game, video, hitter and pitcher in the dashboard page. Can't change anything, and can't read the sheet itself |
+| **A recorder** | The setup link, which carries the upload token (section 8) | Add pitches to your sheet, download the rosters, and open or share the team dashboard. Can't read the sheet itself |
+| **The team** | The dashboard link, which carries the viewer key (section 9) | See the dashboard. Can't change anything, and can't open the sheet |
+| **A viewer of the sheet** | The sheet shared with them (view only) | Read the sheet. Never touches the app |
+
+Every key, sign-in and secret involved, and how to take each back, is in section 13.
 
 ---
 
@@ -107,7 +114,7 @@ Consequences:
 
 - **Free and nearly maintenance-free**: no machine to patch, no bill.
 - **Fast at the field**: every tap is handled on the phone, so it doesn't matter how bad the signal is.
-- **The code is public.** GitHub Pages on a free account requires a public repository, so anyone can read the app's code. That's fine: no secret lives in the code (section 12).
+- **The code is public.** GitHub Pages on a free account requires a public repository, so anyone can read the app's code. That's fine: no secret lives in the code (section 13).
 
 ### 2.3 HTML, CSS and JavaScript
 
@@ -127,7 +134,7 @@ A web page is made of three languages:
 | [`js/connect.js`](../js/connect.js) | Setup links | Nothing else |
 | [`js/app.js`](../js/app.js) | The screens, buttons and startup | All of the above |
 
-Keeping the rules (`game.js`) apart from the screen and storage is what lets them be tested on their own (section 15), and what would let the storage be swapped for something else later (section 5.7).
+Keeping the rules (`game.js`) apart from the screen and storage is what lets them be tested on their own (section 16), and what would let the storage be swapped for something else later (section 5.7).
 
 ### 2.4 The browser as a small computer
 
@@ -152,7 +159,7 @@ Each website gets its **own** IndexedDB, keyed by its address (its *origin*, 2.9
 
 Normally, opening a website means downloading its files. With no signal, that fails.
 
-A **service worker** is a small script a site can install into the browser. It sits *between the app and the network*. Every time the app asks for a file, the service worker can answer from its own **cache** (a stored copy) instead of going to the internet. PitchTracker's service worker ([`sw.js`](../sw.js)) stores a copy of every app file the first time you open the app, and from then on always answers from that copy. That's why the app opens in a stadium with no signal at all. Section 10 has the details.
+A **service worker** is a small script a site can install into the browser. It sits *between the app and the network*. Every time the app asks for a file, the service worker can answer from its own **cache** (a stored copy) instead of going to the internet. PitchTracker's service worker ([`sw.js`](../sw.js)) stores a copy of every app file the first time you open the app, and from then on always answers from that copy. That's why the app opens in a stadium with no signal at all. Section 11 has the details.
 
 ### 2.7 PWAs: websites that install like apps
 
@@ -173,7 +180,7 @@ These rules shaped several design decisions:
 - **Separate storage.** A Home Screen app has its **own** storage, separate from Safari's, and it starts **empty**. Something saved while the page is open in Safari isn't visible to the installed app, and vice versa. This is why setup links are built the way they are (section 8.4), and why the backup/import buttons exist.
 - **No reliable background work.** iOS doesn't let web apps upload in the background after you close them. Uploads happen while the app is open (section 6.2).
 
-**Android is simpler.** Chrome (and Samsung Internet, Edge) on Android installs a web app properly: it offers *Install app*, and the installed app **shares the browser's storage**, so whatever was set up in the browser (including the sheet connection) is already there. Persistent storage is normally granted to installed apps, and there is no 7-day rule for them. The app catches Chrome's install offer and shows its own **Install app** button ([`installNoticeHTML`](../js/app.js#L191)). Android also has a system **Back** button, which in an installed web app would normally close it; during a game the app turns Back into "return to the games list" instead (11.2).
+**Android is simpler.** Chrome (and Samsung Internet, Edge) on Android installs a web app properly: it offers *Install app*, and the installed app **shares the browser's storage**, so whatever was set up in the browser (including the sheet connection) is already there. Persistent storage is normally granted to installed apps, and there is no 7-day rule for them. The app catches Chrome's install offer and shows its own **Install app** button ([`installNoticeHTML`](../js/app.js#L191)). Android also has a system **Back** button, which in an installed web app would normally close it; during a game the app turns Back into "return to the games list" instead (12.2).
 
 ### 2.9 Origins and CORS
 
@@ -244,7 +251,7 @@ sequenceDiagram
 
 When the app opens, the browser loads `index.html`, which loads `js/app.js`. The last line of that file calls [`boot`](../js/app.js#L1199), which:
 
-1. **Registers the service worker** so app files get cached (section 10).
+1. **Registers the service worker** so app files get cached (section 11).
 2. **Asks for persistent storage** ([`requestPersistence`](../js/db.js#L45)).
 3. **Loads the settings** (sheet address, token, your name) into memory, and gives this phone a random **device ID** the first time.
 4. **Checks the address for a setup link** (`#c=…`, or `#connect=…` in old links) and applies it if it's new ([line 1216](../js/app.js#L1216), section 8).
@@ -335,7 +342,7 @@ On Google's side, [`doPost`](../apps-script/Code.gs#L190) receives the batch, ch
 
 ## 4. The game rules in code
 
-All baseball logic lives in [`js/game.js`](../js/game.js). It has no screen and no storage: you give it events, it gives you state. That's why it can be tested on its own with plain Node.js (section 15).
+All baseball logic lives in [`js/game.js`](../js/game.js). It has no screen and no storage: you give it events, it gives you state. That's why it can be tested on its own with plain Node.js (section 16).
 
 ### 4.1 What a pitch is
 
@@ -427,7 +434,7 @@ Lopez leads off for the away team. Events and state after each:
 | — | *Undo* | event 10 undone | 0–0 | 1 | Jones | 3 |
 | 12 | FB · IN · IN_PLAY, then Out → Fly out → Skip | **fly out** | 0–0 | 2 | Kim | 4 |
 
-This is the sequence the browser test runs (section 15).
+This is the sequence the browser test runs (section 16).
 
 ### 4.6 The sheet rows: `buildPitchRow` and `buildPaRow`
 
@@ -622,7 +629,7 @@ Any change in sync status updates every badge on screen, and the open dialog, ri
 
 ## 7. The Google side: Apps Script and the sheet
 
-The receiving end is [`apps-script/Code.gs`](../apps-script/Code.gs). It lives in this repository, but it only runs once a copy of it is in the sheet's **Extensions → Apps Script** project and deployed. Getting it there, by hand or automatically from GitHub, is the closest thing PitchTracker has to a build: section 16 covers it step by step.
+The receiving end is [`apps-script/Code.gs`](../apps-script/Code.gs). It lives in this repository, but it only runs once a copy of it is in the sheet's **Extensions → Apps Script** project and deployed. Getting it there, by hand or automatically from GitHub, is the closest thing PitchTracker has to a build: section 17 covers it step by step.
 
 ### 7.1 What Apps Script is
 
@@ -633,9 +640,9 @@ Apps Script is JavaScript that runs **on Google's servers**, attached to a Googl
 | Setting | Value | Why |
 |---|---|---|
 | Execute as | **Me** | The script writes to *your* sheet with *your* permission. Recorders don't need Google accounts or access to the sheet |
-| Who has access | **Anyone** | Phones call it without signing in to Google. The token (7.4) is what keeps strangers out |
+| Who has access | **Anyone** | Phones and the dashboard call it without signing in to Google. The keys (7.4, 13.2) are what keep strangers out |
 
-Every **New deployment** creates a new address. To change the script but keep the address (so setup links keep working), use **Deploy → Manage deployments → Edit → Version: New version**. The GitHub Action in section 16 does the same thing automatically.
+Every **New deployment** creates a new address. To change the script but keep the address (so setup links keep working), use **Deploy → Manage deployments → Edit → Version: New version**. The GitHub Action in section 17 does the same thing automatically.
 
 ### 7.3 `setup`: run once by hand, in a new sheet
 
@@ -649,11 +656,14 @@ Every **New deployment** creates a new address. To change the script but keep th
 
 Running it again is safe: it keeps the existing token and rows, and rebuilds the header and Summary. It is only needed once, for a new sheet: after that, column changes are applied by the script itself (7.5, step 3).
 
-### 7.4 The token
+### 7.4 The keys
 
-The token is a shared secret between your sheet and the phones you've set up. Every upload carries it; the script compares it with the stored one and refuses with *Wrong token* if they differ ([line 199](../apps-script/Code.gs#L199)).
+The script answers anyone (7.2), so it checks a key in every request itself. There are two, both random values in the script's private **Script properties**, never in the code:
 
-It lives in **Script properties**, not in the code, so the code can sit in a public repository. To revoke everyone's access: delete the `TOKEN` property (**Project Settings → Script properties**), run `setup` again to get a new token, and share a new setup link. Old links stop working immediately.
+- the **upload token** (`TOKEN`), made by `setup`, which lets a phone write rows and read the rosters;
+- the **viewer key** (`VIEW_KEY`), made the first time a phone asks for a dashboard link, which only reads the dashboard's data.
+
+What each request needs, where the keys travel and how to change them: section 13.
 
 ### 7.5 `doPost`: receiving pitches and plate appearances
 
@@ -667,23 +677,26 @@ It lives in **Script properties**, not in the code, so the code can sit in a pub
    2. reads the whole `id` column once and builds a lookup: ID → row number;
    3. builds each row in header order (turning `recorded_at` into a real date, adding `synced_at` = now), then **ID already present** → overwrite that row ([line 263](../apps-script/Code.gs#L263)), which is how resends, undos (tombstones) and late outcomes land; **new ID** → add to a list of new rows;
    4. writes all new rows in **one** operation at the bottom.
-5. Answers `{"ok": true, "version": 5, "received": N, "appended": M, "pas": P}`, or `{"ok": false, "error": "…"}`. The lock is always released, and any error inside is caught and sent back as `{"ok": false}`: an uncaught one would make Google answer with an HTML error page, which the phone could only report as *couldn't reach the sheet script*.
+5. Answers `{"ok": true, "version": 9, "received": N, "appended": M, "pas": P}`, or `{"ok": false, "error": "…"}`. The lock is always released, and any error inside is caught and sent back as `{"ok": false}`: an uncaught one would make Google answer with an HTML error page, which the phone could only report as *couldn't reach the sheet script*.
 
-A request with `"action": "rosters"` (3.2.1) takes a different path right after the token check ([line 200](../apps-script/Code.gs#L200)): it reads the Rosters tab and answers `{"ok": true, "version": 5, "rosters": […]}` without touching any rows.
+A request with `"action": "rosters"` (3.2.1) takes a different path right after the token check ([line 200](../apps-script/Code.gs#L200)): it reads the Rosters tab and answers `{"ok": true, "version": 9, "rosters": […]}` without touching any rows.
 
-`doGet` ([line 186](../apps-script/Code.gs#L186)) just answers `{"ok": true, "app": "PitchTracker", "version": 5}`; the deploy workflow uses it to confirm the new version is live. **Test connection** sends an empty upload instead (`rows: []`), so it also checks the token and the script version, and brings the columns up to date if a deploy changed them.
+`doGet` ([line 186](../apps-script/Code.gs#L186)) just answers `{"ok": true, "app": "PitchTracker", "version": 9}`; the deploy workflow uses it to confirm the new version is live. **Test connection** sends an empty upload instead (`rows: []`), so it also checks the token and the script version, and brings the columns up to date if a deploy changed them.
 
-**Versions.** Two numbers are involved, and they mean different things:
+Two other requests read rather than write: `"action": "viewerKey"` (with the upload token) answers the dashboard's viewer key, and `"action": "dashboard"` (with the viewer key, no lock, no token) answers the dashboard's data (9.3). The full list, with the key each needs, is in 13.2.
+
+**Versions.** Several numbers are involved, and they mean different things:
 
 | Number | Where | Meaning |
 |---|---|---|
-| `VERSION` | [`Code.gs`](../apps-script/Code.gs#L22), now 6 | Which script this is. Goes up on **every** change to the file, and is sent in every reply. The deploy workflow uses it to confirm the new script is live (16.4) |
-| `SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js#L14), now 6 | The oldest script the app will upload to. Goes up only when the app *needs* something new from the script |
-| `ROSTER_SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js#L16), now 4 | The oldest script the app will ask for rosters |
+| `VERSION` | [`Code.gs`](../apps-script/Code.gs), now 9 | Which script this is. Goes up on **every** change to the file, and is sent in every reply. The deploy workflow uses it to confirm the new script is live (17.4) |
+| `SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js), now 6 | The oldest script the app will upload to. Goes up only when the app *needs* something new from the script |
+| `ROSTER_SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js), now 4 | The oldest script the app will ask for rosters |
+| `DASHBOARD_SCRIPT_VERSION` | [`js/sync.js`](../js/sync.js), now 8 | The oldest script the app will ask for the viewer key |
 
 The app refuses to sync with a script that reports less than `SCRIPT_VERSION`, and says why (*the sheet script is out of date*). That stops an old script, which doesn't know about plate appearances or `session_type` (version 6: live BP rows would be counted as games), from answering "ok" and having the app mark them uploaded. Nothing is lost while it waits: everything stays pending on the phone. A script from before rosters doesn't know the `rosters` action, reads the request as an empty upload and answers *No rows*; the app turns that into the same *out of date* message ([line 123](../js/sync.js#L123)).
 
-**Updating an existing sheet.** Deploy the new `Code.gs` (automatically from GitHub, or paste it and **Deploy → Manage deployments → Edit → New version**; section 16). On the first upload, [`prepareSheet`](../apps-script/Code.gs#L97) sees that Pitches has the old columns, saves a copy of it as *Pitches (before update …)*, and moves every existing row into the new layout by column name. New columns are left blank for old rows.
+**Updating an existing sheet.** Deploy the new `Code.gs` (automatically from GitHub, or paste it and **Deploy → Manage deployments → Edit → New version**; section 17). On the first upload, [`prepareSheet`](../apps-script/Code.gs#L97) sees that Pitches has the old columns, saves a copy of it as *Pitches (before update …)*, and moves every existing row into the new layout by column name. New columns are left blank for old rows.
 
 ### 7.6 The Summary tab
 
@@ -704,43 +717,24 @@ Ten formulas ([line 80](../apps-script/Code.gs#L80)) using Sheets' `QUERY` funct
 
 `session_type` is filled for every row: when the layout is updated, old rows get `game`, and an upload without it (from an app older than the column) is a game too (`DEFAULTS` in Code.gs).
 
-`where … = false` leaves out undone rows. If columns are ever reordered, these letters must be updated (16.2). The Summary tab is rebuilt from scratch every time the layout is updated, so anything typed into it by hand is lost; build your own tables in a tab of your own.
+`where … = false` leaves out undone rows. If columns are ever reordered, these letters must be updated (17.2). The Summary tab is rebuilt from scratch every time the layout is updated, so anything typed into it by hand is lost; build your own tables in a tab of your own.
 
 ### 7.7 Video timestamps
 
 A second, separate use of the same script: a window **inside the sheet**, used on a computer, that links each row of the **PlayByPlay** tab (made from the scoresheets, outside this app) to its moment in the game's YouTube video.
 
-- **The menu.** [`onOpen`](../apps-script/Code.gs) is a *simple trigger*: Google runs it every time the sheet is opened, and it adds **PitchTracker → Video timestamps**. That runs `showVideoTool`, which hands Google a web page (`VIDEO_TOOL_HTML`, kept inside `Code.gs` because the deploy ships only that file, 16.4). Google shows it in a floating window over the sheet (a *modeless dialog*, `HtmlService`), in its own sandboxed frame. The app's Content-Security-Policy doesn't apply here: this page is served by Google, not GitHub Pages.
+- **The menu.** [`onOpen`](../apps-script/Code.gs) is a *simple trigger*: Google runs it every time the sheet is opened, and it adds **PitchTracker → Video timestamps**. That runs `showVideoTool`, which hands Google a web page (`VIDEO_TOOL_HTML`, kept inside `Code.gs` because the deploy ships only that file, 17.4). Google shows it in a floating window over the sheet (a *modeless dialog*, `HtmlService`), in its own sandboxed frame. The app's Content-Security-Policy doesn't apply here: this page is served by Google, not GitHub Pages.
 - **The video.** The page embeds YouTube's official player ([IFrame Player API](https://developers.google.com/youtube/iframe_api_reference)). The page asks it the current second (`getCurrentTime`) and tells it to play, pause or jump, which is all the keys do. Clicking inside the video gives it the keyboard, so the page takes the keyboard back whenever the player changes state or the window loses focus to it.
 - **Talking to the script.** The page calls four functions through `google.script.run`, which runs them as the person at the computer (an editor of the sheet; no token involved): `videoToolGames`, `videoToolEvents` (one game's PlayByPlay rows in at-bat order: by `event_seq`, then each run of plays between pitches moved after the plate appearance it happened during, since a time marks when an at-bat starts; [`atBatOrder`](../apps-script/Code.gs), and the same in the dashboard's lists), `saveVideoLink` (the game's link, into the **Videos** tab) and `setVideoTime`. Each takes the script lock, like `doPost`. PlayByPlay's columns are found by header name.
 - **Where a time lives.** PlayByPlay is regenerated from the Scoresheets tab and sometimes rebuilt from scratch, so nothing is written into its rows. `setVideoTime` writes one row in **VideoTimes**: `game_id`, `event_seq`, and the play's `event_code` and `batter` *as they were when stamped*, then the seconds, the link (`…watch?v=<id>&t=<seconds>s`) and the label (`41:12`). The video id is checked to be exactly 11 letters, digits, `-` or `_` ([`youtubeId`](../apps-script/Code.gs)), and the seconds are a whole number.
 - **PlayByPlay's `video` column** is one `ARRAYFORMULA` in its header cell ([`pbpVideoFormula`](../apps-script/Code.gs)), after the generated columns. For every row it looks up `game_id|event_seq` in VideoTimes. If the stored code and batter still match the row, it shows `HYPERLINK(link, label)`, with the label worked out from the seconds (a typed `26:19` would turn into a time of day in Sheets and show as `1.0965`); if they don't (a corrected game file inserted or removed a play, so that number is now a different play), it shows `⚠ check`, never a link to the wrong moment. Regenerating the rows therefore keeps every time without a refill step. The formula is rewritten from the current header positions each time the window opens or a time is saved.
-- **Permission.** Showing a window needs a permission the upload part didn't (`script.container.ui`, *display content in the spreadsheet*). Google asks the sheet's owner to approve the script again after the first deploy that has it. Until then it may refuse to run the script at all, uploads included; the phones keep their rows pending and retry (13), and the deploy's version check can fail. Approving once (open the sheet, click the menu) fixes both.
-
-### 7.8 Dashboards
-
-Looker Studio (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets → Pitches**. Add a filter `deleted = false`, and a control on `session_type` (games, live BP or both). Add **PlateAppearances** as a second data source for results. Useful fields to build from: `pitch_type`, `zone`, `action`, `result`, `pa_result`, `batting_team`, `balls_before`/`strikes_before` (for "what does he throw 0–2?"), `pitcher`, `game_id`. A *chase rate*, for instance, is swings where zone = OUT divided by pitches where zone = OUT.
-
-### 7.9 The team dashboard
-
-A second page next to the app, `dashboard/` ([`index.html`](../dashboard/index.html), [`dash.js`](../dashboard/dash.js), [`model.js`](../dashboard/model.js)), for people who should see the data but not record or open the sheet.
-
-- **The link.** Settings → Team dashboard asks the script for the **viewer key** (`{token, action: 'viewerKey'}`, so only a connected phone can) and builds `…/dashboard/#v=<deployment id>.<viewer key>`, the same shape as a setup link with its own name (`#view=` is the long form for Workspace addresses, [`buildViewerLink`](../js/connect.js)). A setup link is never read as a dashboard link, nor the reverse. The key is `VIEW_KEY` in the script properties, made the first time it's asked for; **Replace the link…** sends `renew: true`, which makes a new one, so every old dashboard link stops working while uploads carry on.
-- **Opening it.** The page validates the link as strictly as the app does, asks to confirm the **sheet code** (8.7) the first time, keeps address and key in `localStorage`, and takes the `#…` out of the address bar. Next time, the plain address opens it. If the script answers `bad_key` (the link was replaced), the page forgets it and says so.
-- **Reading.** One request, `{action: 'dashboard', key}`, answered by `dashboard_` in [`Code.gs`](../apps-script/Code.gs) **before** the lock and the token check: it only reads. It sends Pitches (with `pa_end`) and PlateAppearances (only the columns the page uses, no deleted rows, no IDs or recorder names), all of PlayByPlay except the `video` formula, VideoTimes and the Videos links, each as `{cols, rows}`. Columns are found by header name. Nothing is cached on the device; the page reads again when it comes back to the screen after 5 minutes, or on ↻.
-- **Plays.** [`buildModel`](../dashboard/model.js) makes one list of plays. A game in PlayByPlay takes its plays from there (names, results, runs, base-running plays). Each of its plate appearances gets the app's pitches by matching the n-th plate appearance of each half-inning (same game ID), as the claude.ai dashboard does. A time from VideoTimes counts only if its code and batter still match the play (as in 7.7). Games only the app recorded, and live BP, use PlateAppearances, and pitches of an unfinished plate appearance count for pitch numbers only.
-- **Numbers.** AVG, OBP (`(H + BB + HBP) / (AB + BB + HBP + SF)`) and SLG from the plays; swing, whiff (misses per swing), chase (swings at pitches out of the zone, over pitches out of the zone), strike %, first-pitch strike % and CSW from the pitches, as defined in the claude.ai dashboard. Unit tests: [`tests/dashboard.test.js`](../tests/dashboard.test.js) and [`tests/winprob.test.js`](../tests/winprob.test.js).
-- **Hitters and Pitchers.** "Whole team" or one player. [`line`](../dashboard/model.js) works out everything for a list of plays: results (AVG, OBP, SLG), pitch rates (swing, zone swing, first-pitch swing, whiff, 2-strike whiff, chase, strike, CSW, freezes, each also by pitch type) and plate-appearance rates as the claude.ai dashboard defines them: a quality at-bat is a hit, walk, hit by pitch, sacrifice or catcher's interference, 6 pitches or more, or two 2-strike fouls; 1-1 strikes; putaways (strikeouts of batters who reached two strikes); quick outs (retired in 3 pitches or fewer); leadoff batters retired; 3-ball counts. The plate-appearance rates count only plate appearances with pitches recorded. [`byGame`](../dashboard/model.js) gives the same per game for the trend charts; a player's chart has the team's line in grey behind. The comparison chart and the table rank everyone on the team on any of these.
-- **Win probability** ([`winprob.js`](../dashboard/winprob.js)), for games in PlayByPlay: the claude.ai dashboard's run model, ported line for line, so both show the same numbers. It plays a half-inning out one event at a time from this league's outcome and base-running rates (blended with typical rates worth 50 chances), giving run expectancy for each base and out state, and from those the home team's chance of winning (7 innings, the run rule, extra innings from runners on 1st and 2nd). Each play gets RE24, win probability before and after, WPA for the batting team and leverage; a play with an error is also valued as if it had been made, so the error is charged to the fielder. The Games tab shows a summary sentence, the chart (following the team in the most games, if it played), the biggest plays, who moved the game, team totals, and the model's tables.
-- **Leaderboards** ([`leaders.js`](../dashboard/leaders.js)): the same boards, titles and minimum samples as the claude.ai dashboard, for the team picked. Streaks run across games in date order and are *active* when the latest chance kept them going; ties share a rank. They use the pitches matched to plays, so names are the scoresheet's where a game has one (the claude.ai dashboard uses the app's names). `pa_end` comes from the Pitches tab; where it's missing, a strikeout's or walk's last pitch gets it.
-- **The video.** YouTube's IFrame player from `youtube-nocookie.com`. Tapping a play seeks to its time; *Follow the video* checks the player's time every 0.7 s and marks the play on screen. **Watch** on a hitter's or pitcher's plate appearance opens that game at that moment. If YouTube can't load, or the owner blocks embedding, the page says so with a link to the video.
-- **Its own lockdown.** The page has its own Content-Security-Policy: its own files, `script.google.com` for data, and YouTube's script, frame and thumbnails. It sends the referrer as the site's origin only, because YouTube refuses to play embeds with no referrer. The app's own policy is unchanged. It imports the app's [`connect.js`](../js/connect.js) and [`game.js`](../js/game.js), which have no DOM or storage; the service worker doesn't cache the dashboard's own files.
+- **Permission.** Showing a window needs a permission the upload part didn't (`script.container.ui`, *display content in the spreadsheet*). Google asks the sheet's owner to approve the script again after the first deploy that has it. Until then it may refuse to run the script at all, uploads included; the phones keep their rows pending and retry (14), and the deploy's version check can fail. Approving once (open the sheet, click the menu) fixes both.
 
 ---
 
 ## 8. Setup links
 
-How someone else's phone gets connected to your sheet without typing anything. The code is in [`js/connect.js`](../js/connect.js), and the part in [`js/app.js` from line 1004](../js/app.js#L1004).
+How someone else's phone gets connected to your sheet without typing anything. (Dashboard links work the same way, with their own name and a read-only key: 9.2.) The code is in [`js/connect.js`](../js/connect.js), and the part in [`js/app.js` from line 1004](../js/app.js#L1004).
 
 ### 8.1 What a link looks like
 
@@ -785,7 +779,7 @@ This is the trickiest part of the app, and it took three attempts.
 - Inside the installed app it does nothing, so there's no reload loop.
 - If the installed app opens at that address, `boot` finds `#connect=…` and connects it, exactly as when opening a link someone sent you.
 
-On a real iPhone this **didn't work** the first time it was tried. One reason is certain: the phone was still running the *previous* version from its offline cache (10.2), which didn't do any of this. Whether iOS keeps the `#…` part of the address at all is not known yet. **Settings → Status → Opened at** now shows the address the installed app was opened at (token hidden), which answers that the next time it's tried.
+On a real iPhone this **didn't work** the first time it was tried. One reason is certain: the phone was still running the *previous* version from its offline cache (11.2), which didn't do any of this. Whether iOS keeps the `#…` part of the address at all is not known yet. **Settings → Status → Opened at** now shows the address the installed app was opened at (token hidden), which answers that the next time it's tried.
 
 **Attempt 3: the clipboard hand-over, which doesn't depend on iOS.** It costs two taps:
 
@@ -799,7 +793,7 @@ None of this is needed on Android, where the installed app shares the browser's 
 
 Attempt 2 is kept. If iOS does keep the address, the installed app connects with no taps at all, and the paste button is simply never needed.
 
-What the browser test (15.1) covers: saving a connection in a "Safari" context puts the link in the address; a separate "installed app" context with empty storage, opened at that address, connects by itself; an installed app opened at the bare address shows the paste box; **Copy setup link** puts the link on the clipboard; and **Paste & connect** connects from it. What only a real iPhone can show is how iOS treats the address.
+What the browser test (16.1) covers: saving a connection in a "Safari" context puts the link in the address; a separate "installed app" context with empty storage, opened at that address, connects by itself; an installed app opened at the bare address shows the paste box; **Copy setup link** puts the link on the clipboard; and **Paste & connect** connects from it. What only a real iPhone can show is how iOS treats the address.
 
 ### 8.5 Making and sharing a link
 
@@ -827,21 +821,181 @@ What was tested: the QR code was read back with an independent decoder ([jsQR](h
 
 ---
 
-## 9. Backups and CSV
+## 9. The team dashboard
+
+A second page next to the app, for people who should see the data but not record it or open the sheet. It lives in
+[`dashboard/`](../dashboard) and is served by GitHub Pages like the app: `https://pmiquelm.github.io/PitchTracker/dashboard/`.
+
+### 9.1 What it is made of
+
+| File | What it does |
+|---|---|
+| [`dashboard/index.html`](../dashboard/index.html) | The page shell and its own security policy (9.9) |
+| [`dashboard/dash.js`](../dashboard/dash.js) | Opening a link, reading the sheet, drawing every tab, the charts and the video |
+| [`dashboard/model.js`](../dashboard/model.js) | Turns the sheet's tabs into plays, games and every number (9.4, 9.5). No page, no network: unit-tested |
+| [`dashboard/winprob.js`](../dashboard/winprob.js) | The run and win model (9.6). Unit-tested |
+| [`dashboard/leaders.js`](../dashboard/leaders.js) | The leaderboards (9.7). Unit-tested |
+| [`dashboard/dash.css`](../dashboard/dash.css) | Its look, light and dark |
+
+It reuses two of the app's files, [`js/connect.js`](../js/connect.js) (links and the sheet code) and
+[`js/game.js`](../js/game.js) (pitch type names, game dates and numbers). Both have no page or storage code, which is
+what lets both pages share them (a rule in [`CLAUDE.md`](../CLAUDE.md)). The app's service worker doesn't cache the
+dashboard: it is always loaded fresh.
+
+### 9.2 Opening a dashboard link
+
+A dashboard link looks like a setup link with a different name after the `#`:
+
+```
+https://pmiquelm.github.io/PitchTracker/dashboard/#v=AKfycbx3Q9d…ab.0f3a…9c
+```
+
+After `#v=` come the script's deployment ID and the **viewer key** (13.4), joined by a dot. Workspace addresses use the
+long form `#view=…`, as setup links do (8.1). [`buildViewerLink`](../js/connect.js) and
+[`decodeViewerLink`](../js/connect.js) make and read them, with the same strict validation as setup links (8.3). A setup
+link is never read as a dashboard link, nor the reverse: opening an app setup link in the dashboard just says so and
+takes it out of the address bar.
+
+When the page opens with a link, [`boot`](../dashboard/dash.js):
+
+1. validates it;
+2. the first time, asks **Open the team dashboard?** and shows the **sheet code** (8.7), as the app does before
+   connecting, because a link from someone else could show made-up data;
+3. keeps the address and key in the browser's `localStorage` and takes the `#…` out of the address bar. From then on
+   the plain address opens it.
+
+If the script answers `bad_key` (the link was replaced, 13.4), the page forgets the key and says the link no longer
+works.
+
+### 9.3 Reading the sheet
+
+One request, `{"action": "dashboard", "key": …}`, sent like an upload (a "simple" POST, 2.9). The script answers it in
+[`dashboard_`](../apps-script/Code.gs) **before** taking the lock or looking at the upload token: it only reads. It
+sends, each as `{cols, rows}`, with columns found by their header name so moved columns don't matter:
+
+- **Pitches** and **PlateAppearances**: only the columns the dashboard uses, without deleted rows, and without IDs or
+  recorder names;
+- **PlayByPlay**, every column but the `video` formula;
+- **VideoTimes**, and the game links from **Videos**.
+
+Nothing is kept on the device. The page reads again when it comes back to the screen after 5 minutes, or on ↻.
+
+### 9.4 Plays, and the at-bat order
+
+[`buildModel`](../dashboard/model.js) makes one list of **plays**:
+
+- **A game in PlayByPlay** (transcribed from a scoresheet) takes its plays from there: names, results, runs, and the
+  plays between pitches (steals, wild pitches, pickoffs). Each plate appearance gets the app's pitches by matching the
+  *n*-th plate appearance of each half-inning in the app (same game ID), as the claude.ai dashboard does.
+- **A game only the app recorded, and live BP**, take their plate appearances from PlateAppearances and their pitches
+  from Pitches. Pitches of an unfinished plate appearance count for pitch numbers only.
+- **Video times** come from VideoTimes, and count only if the play's code and batter still match (7.7).
+
+**At-bat order.** The scoresheet numbers plays as they happen, so a steal during Bob's at-bat comes *before* Bob's plate
+appearance. Video times mark when an at-bat starts, so lists show each plate appearance first, then the plays that
+happened during it ([`atBatOrder`](../dashboard/model.js), the same rule as the stamping window, 7.7). A play after the
+last plate appearance of a half-inning (a pickoff for the third out) stays at its end. Scores and win probability still
+follow the order of play.
+
+**Games** are listed oldest first in the menu, by the date at the start of the game ID, doubleheaders by game number
+(`gameDate` and `gameNumber` in [`js/game.js`](../js/game.js)).
+
+### 9.5 The numbers
+
+[`line`](../dashboard/model.js) works out everything for any list of plays (a player's, a team's, one game's), with the
+claude.ai dashboard's definitions:
+
+| Kind | Numbers |
+|---|---|
+| Results | PA, AB, H, 2B, 3B, HR, BB, HBP, K, RBI; AVG; OBP = (H + BB + HBP) / (AB + BB + HBP + SF); SLG |
+| Pitches | swing, zone swing, first-pitch swing, whiff (misses per swing), 2-strike whiff, chase (swings at pitches out of the zone, over pitches out of the zone), zone %, strike % (not a ball), CSW (called + swinging strikes), first-pitch strikes; each also per pitch type |
+| Freezes | a called third strike; freeze rate = freezes over 2-strike pitches in the zone |
+| Plate appearances | **quality at-bat**: a hit, walk, hit by pitch, sacrifice or catcher's interference, 6 pitches or more, or two 2-strike fouls; **1-1 strikes**; **putaways** (strikeouts of batters who reached two strikes); **quick outs** (retired in 3 pitches or fewer); **leadoff batters retired**; **3-ball counts**. These count only plate appearances with pitches recorded |
+
+**Hitters** and **Pitchers** show the whole team or one player. A player's numbers carry the team's beside them. Below
+are game-by-game charts ([`byGame`](../dashboard/model.js); a player's chart draws the team's line in grey behind), a
+chart comparing the team on any number (with fastball and curveball dots where they apply), a sortable table of
+everyone with a team total, pitch types, swing rate and pitch mix by count ([`countGrid`](../dashboard/model.js)),
+batter vs pitcher ([`matchups`](../dashboard/model.js)) and every plate appearance. "The team" defaults to the team in
+the most games, which is yours: opponents change from game to game. Unit tests:
+[`tests/dashboard.test.js`](../tests/dashboard.test.js).
+
+### 9.6 Win probability
+
+For games in PlayByPlay, [`winprob.js`](../dashboard/winprob.js) is the claude.ai dashboard's run model, ported line for
+line. Both were run side by side on the same games and gave the same numbers to their rounding.
+
+- **Rates.** How often each outcome (out, walk or HBP, single or error, double, triple, home run) and base-running play
+  (double play, wild pitch / passed ball / balk, steal, caught stealing or pickoff) happened in this league's games,
+  each blended with a typical rate worth 50 chances, so a small sample doesn't swing the model.
+- **Run expectancy.** The model plays a half-inning out one event at a time, giving the runs expected from each base and
+  out state.
+- **Win probability.** From those, the home team's chance of winning from any inning, half, bases, outs and score, with
+  the league's rules: 7 innings, the run rule (20 after 3, 15 after 4, 10 after 5 and 6), extra innings starting with
+  runners on 1st and 2nd.
+- **Each play** gets RE24 (the change in run expectancy plus runs scored), the chance of winning before and after, WPA
+  (win probability added, for the batting team, in percentage points) and leverage (1 = an average plate appearance).
+  A play with an error is also valued as if it had been made: the batter and pitcher get that, and the fielder is
+  charged with the rest.
+
+The Games tab shows a summary sentence, the chart (following your team if it played; point at it for the play, tap to
+jump the video), the biggest plays, who moved the game (hitting, running, pitching and fielding), team totals, and the
+model's tables under *How the win probability is worked out*. Unit tests: [`tests/winprob.test.js`](../tests/winprob.test.js).
+
+### 9.7 Leaderboards
+
+[`leaders.js`](../dashboard/leaders.js) has the claude.ai dashboard's boards, titles and minimum samples, good and bad,
+for a team's hitters and pitchers. Streaks run across games in date order and are *active* when the latest chance kept
+them going; ties share a rank. Names are the scoresheet's where a game has one (the claude.ai dashboard uses the app's).
+
+### 9.8 The video
+
+The page embeds YouTube's IFrame player from `youtube-nocookie.com`. Tapping a play's ▶ seeks to its time; **▶** on a
+hitter's or pitcher's plate appearance opens that game at that moment.
+
+**Follow the video** checks the player's time every 0.7 s and marks the last play whose time has passed. On a wide
+screen it scrolls the list of plays beside the video; on a phone, where the whole page scrolls under the header and the
+video, it scrolls the page so the play sits just below the video.
+
+If YouTube can't load, or the video's owner doesn't allow embedding, the page says so with a link to the video.
+
+### 9.9 The page
+
+- **Its own security policy** ([`dashboard/index.html`](../dashboard/index.html)): its own files, `script.google.com`
+  (and `script.googleusercontent.com`) for data, and YouTube's script, frame and thumbnails. Nothing else. It sends the
+  site's origin as the referrer, and only that, because YouTube refuses to play embeds with no referrer. The app's
+  policy is unchanged (13.9).
+- **Header**: the name, the **Games / Live BP / Both** menu and ↻ always share the first row; the tabs go below on a
+  phone. The video sticks just under the header, whatever its height.
+- **Wide tables** keep the name column pinned. At rest it shows full names; scrolling sideways clips them away to a short
+  form (initials, two letters a word where initials clash, or a play's code), freeing room for the numbers
+  ([`freezeNames`](../dashboard/dash.js)), as in the claude.ai dashboard.
+- **Charts** are drawn as plain SVG once the page is on screen, and again when its width changes. No chart library.
+
+### 9.10 Other dashboards
+
+- **Looker Studio** (lookerstudio.google.com) connects to the sheet directly: **Create → Data source → Google Sheets →
+  Pitches**, a filter `deleted = false`, a control on `session_type`, and **PlateAppearances** as a second source.
+- **The claude.ai dashboard** is a private page on claude.ai that reads the sheet through the Google Sheets connector,
+  with each reader's own Google access (13.8). The team dashboard's numbers follow its definitions.
+
+---
+
+## 10. Backups and CSV
 
 Code: [`js/backup.js`](../js/backup.js).
 
-### 9.1 Why backups exist
+### 10.1 Why backups exist
 
 Sync covers almost everything. Backups cover the remaining case: **no signal for the whole game *and* the phone at risk** (low battery, borrowed phone, about to reinstall). A backup is a file you can put somewhere else with no internet at all: AirDrop to another phone, the Files app, or a queued email.
 
-### 9.2 Making one
+### 10.2 Making one
 
 **☰ → Back up game (file)** ([`backupJSON`](../js/backup.js#L39)) writes the game record and **every** event (including undone ones) to a JSON file named like `pitchtracker-2026-11-16-HOME-2026-11-16-19-40.json`, and opens the share sheet ([`shareFile`](../js/backup.js#L18)). Safari only allows the share sheet straight after a tap, which is why backups are made from data already in memory, with no waiting first.
 
 **☰ → Export pitches (CSV)** ([`toCSV`](../js/backup.js#L53)) writes the Pitches rows of the current game (undone pitches left out) as a CSV file that opens in Excel or Numbers. **Export plate appearances (CSV)** does the same for the PlateAppearances rows.
 
-### 9.3 Restoring one
+### 10.3 Restoring one
 
 **Import backup** on the home screen ([`importBackup`](../js/backup.js#L71)):
 
@@ -854,11 +1008,11 @@ Uploading imported pitches can't create duplicates: their IDs are the original o
 
 ---
 
-## 10. Working offline: the service worker
+## 11. Working offline: the service worker
 
 Code: [`sw.js`](../sw.js).
 
-### 10.1 Its life cycle
+### 11.1 Its life cycle
 
 1. **Install** ([line 25](../sw.js#L25)): the first time the app is opened (with signal), the service worker downloads every file in its `ASSETS` list into a cache named after the version, e.g. `pitchtracker-v3`. It asks for fresh copies (`cache: 'reload'`), bypassing any stale browser cache. If any file fails, installation fails as a whole and the old version stays. You never get half an app.
 2. **Activate** ([line 33](../sw.js#L33)): deletes caches from older versions, and takes control of open pages.
@@ -866,7 +1020,7 @@ Code: [`sw.js`](../sw.js).
 
 This is **cache-first**: once installed, the app never waits for the network to open, even with full signal.
 
-### 10.2 Updates
+### 11.2 Updates
 
 Cache-first raises a question: how does a new version ever arrive? Every time the app opens with signal, the browser quietly checks whether `sw.js` itself has changed. If it has (and `VERSION` is how we change it), the new service worker installs alongside, downloading all the new files, and takes over.
 
@@ -889,9 +1043,9 @@ Your data isn't in the service worker's cache. It's in IndexedDB (section 5), wh
 
 ---
 
-## 11. The screens and the layout
+## 12. The screens and the layout
 
-### 11.1 Screens
+### 12.1 Screens
 
 | Screen | Function | What's on it |
 |---|---|---|
@@ -903,13 +1057,13 @@ Your data isn't in the service worker's cache. It's in IndexedDB (section 5), wh
 | Lineup / Subs | [`showLineupDialog`](../js/app.js#L787) | Both teams, batting team first: all slots editable (a changed name is a substitution), current-batter selector, each team's pitcher; the game's roster suggested as you type |
 | Log | [`showLogDialog`](../js/app.js#L850) | Every plate appearance, newest first, with half-inning, team, each pitch and its result |
 | Menu | [`showMenu`](../js/app.js#L877) | Pending count, Back up, Export pitches / plate appearances (CSV), Sync now, Exit |
-| Settings | [`showSettings`](../js/app.js#L911) | Sheet address, token, your name, Test connection, Share setup link, Use a setup link, Status (including *App version* and *Opened at*) |
+| Settings | [`showSettings`](../js/app.js#L911) | Sheet address, token, your name, Test connection, Share setup link and QR code, Team dashboard (share link, QR code, open, replace the link), Use a setup link, Status (including *App version* and *Opened at*) |
 
-### 11.2 How screens are drawn
+### 12.2 How screens are drawn
 
 There's no framework (React and the like). Each screen function builds the screen as one piece of HTML text from the current state and puts it in the page, replacing what was there. Taps are caught by a single click handler per screen that reads a `data-act` label on the tapped button ("pad", "undo", "lineup"…). It's simple and fast enough: redrawing the tracker takes far less time than a tap.
 
-Anything that came from a person (player names, game IDs) passes through [`esc`](../js/app.js#L29) before going into the HTML, which neutralises characters like `<` and `"`. Without it, a player named `<img src=x onerror=…>` could run code (12.3).
+Anything that came from a person (player names, game IDs) passes through [`esc`](../js/app.js#L29) before going into the HTML, which neutralises characters like `<` and `"`. Without it, a player named `<img src=x onerror=…>` could run code (13.9).
 
 Errors in the app's own code show up as a red *Error: …* message, so problems aren't silent. Errors from scripts that aren't the app's own (Safari's share sheet, browser extensions) arrive as a bare *Script error.* with no file name; those are ignored ([line 1240](../js/app.js#L1240)). Before that filter existed, pressing Safari's Share button showed a confusing *Error: Script error.*
 
@@ -917,7 +1071,7 @@ Errors in the app's own code show up as a red *Error: …* message, so problems 
 
 Dialogs (Lineup, Log, Menu, Upload status) use the browser's built-in `<dialog>` element ([`openDialog`](../js/app.js#L104)); tapping outside closes them.
 
-### 11.3 Layout
+### 12.3 Layout
 
 All in [`css/app.css`](../css/app.css):
 
@@ -932,49 +1086,158 @@ All in [`css/app.css`](../css/app.css):
 
 ---
 
-## 12. Security and privacy
+## 13. Keys, tokens and sign-ins
 
-### 12.1 What is public
+Every way in, what it lets someone do, where it's kept, and how to take it back.
 
-- **The code.** The repository is public, so anyone can read every line. Nothing secret is in it.
-- **The app's address.** Anyone can open the app. Without a setup link it can't write to your sheet; it just stores pitches on their own phone.
+### 13.1 The whole picture
 
-### 12.2 What is secret, and where it lives
+| Key or sign-in | Who has it | What it allows | Kept in | How to take it back |
+|---|---|---|---|---|
+| **Your Google account** (the sheet's owner) | You | Everything: the sheet, the script, its keys, deploying | Google | — |
+| **Editor access to the sheet** | People you share it with as Editor | The same as the owner, in practice: an editor can open **Extensions → Apps Script**, read the script's keys and deploy it | Google Drive sharing | Remove them in **Share** |
+| **Viewer access to the sheet** | People you share it with as Viewer | Read every tab | Google Drive sharing | Remove them in **Share** |
+| **Upload token** (`TOKEN`), the *writer* key | Every connected phone; every setup link and QR code | Upload pitches and plate appearances, download rosters, get the viewer key (13.3) | Script properties; each phone's settings | New token (13.3) |
+| **Viewer key** (`VIEW_KEY`), the *reader* key | Every dashboard link; each browser that opened one | Read the dashboard's data (9.3). Nothing else | Script properties; each viewer's browser | **Replace the link…** (13.4) |
+| **The script's address** (deployment ID) | Every phone and link | Nothing on its own: send requests that the keys above then accept or refuse | Every phone and link; a GitHub secret | Only by a new deployment, which disconnects everyone |
+| **The sheet code** (`K7Q-X2M`) | Anyone | Nothing: it identifies the sheet, it isn't a key (8.7) | Worked out from the address | — |
+| **Write access to the GitHub repository** | You and any collaborators | Change the app and the dashboard; merging to `main` publishes them and deploys the script (13.7) | GitHub | Remove collaborators |
+| **`CLASPRC_JSON`** (clasp's Google sign-in) | The GitHub environment `apps-script` | Edit and deploy **all** your Apps Script projects | A GitHub environment secret, readable only on `main` | Revoke clasp's access (13.7) |
+| **Google sign-in at the computer** | Sheet editors using **Video timestamps** | Run the window's functions as themselves (13.6) | Google | Their editor access |
+| **Google Sheets connector on claude.ai** | Readers of the claude.ai dashboard | Read the sheet with their own Google access (13.8) | claude.ai | Their sheet access, or the connector |
 
-| Secret | Where | Who has it |
+### 13.2 The script: one address, four requests
+
+The script is deployed as a web app with **Execute as: Me** and **Who has access: Anyone** (7.2). *Execute as me* means
+whatever the script does, it does with your authority over your sheet, so recorders and viewers need no Google account
+and no access to the sheet. *Anyone* means Google lets every request through without a sign-in: **the script itself is
+the gatekeeper**, and decides from the key in each request.
+
+| Request | Key it needs | What it does | Code |
+|---|---|---|---|
+| `GET /exec` | None | Answers `{"ok": true, "app": "PitchTracker", "version": N}`. Nothing else | [`doGet`](../apps-script/Code.gs) |
+| `POST {token, rows, pas}` | Upload token | Writes rows into Pitches and PlateAppearances (7.5). Answers only counts, never data | [`doPost`](../apps-script/Code.gs) |
+| `POST {token, action: "rosters"}` | Upload token | Reads the Rosters tab | `doPost` |
+| `POST {token, action: "viewerKey", renew}` | Upload token | Answers the viewer key, making it the first time; `renew: true` replaces it | `doPost`, `viewerKey_` |
+| `POST {action: "dashboard", key}` | Viewer key | Reads what the dashboard shows (9.3). Can't write | [`dashboard_`](../apps-script/Code.gs) |
+
+A request with the wrong key, or none, gets `{"ok": false, …}` and touches nothing. The two keys never stand in for each
+other: the viewer key can't upload or read rosters, and the upload token can't read the dashboard's data directly (it
+can only fetch the viewer key, which a recorder is trusted with). Both keys are compared exactly, and both are long
+random values (a UUID, and two UUIDs), far beyond guessing, so there's no need to count wrong tries.
+
+When you run `setup` or a deploy adds something new, Google asks **you** to approve what the script may do: read and
+write the spreadsheet it's attached to, keep its settings, show a window in the sheet. That approval is between you and
+your script; no one else ever sees it.
+
+### 13.3 The upload token: who can write
+
+- **Made by** [`setup`](../apps-script/Code.gs) (7.3): a random UUID in the script's **Script properties**, printed once to
+  the execution log. Script properties are private to the script project (and so to the sheet's editors), never in the
+  code, so the code can sit in a public repository.
+- **Carried** in setup links and their QR codes (`#c=<deployment>.<token>`, 8.1), after the `#`, which browsers never send
+  to a server (8.2). Each connected phone keeps it in its own settings ([`js/db.js`](../js/db.js)) and sends it with
+  every upload. Settings shows it as dots and the setup link masked (8.5).
+- **Allows** adding and overwriting rows (by ID) in Pitches and PlateAppearances, downloading the Rosters tab, and getting
+  the viewer key, so any recorder can share the team dashboard. It **doesn't** allow reading pitches or any other tab
+  through the script.
+- **To change it** (a link leaked, or a recorder left): in the Apps Script editor, **Project Settings → Script
+  properties**, delete `TOKEN`; run `setup` again (it keeps your rows and makes a new token); send the new setup link to
+  the recorders who should have it. Phones with the old token keep their pitches pending, with *Wrong token*, until
+  they connect with the new link. The viewer key is a separate value and keeps working.
+
+### 13.4 The viewer key: who can read
+
+- **Made** the first time a connected phone asks for it (**Settings → Team dashboard**), by `viewerKey_`: two random UUIDs
+  in Script properties as `VIEW_KEY`. A recorder's phone doesn't keep it: it fetches it each time you share or open the
+  dashboard, proving itself with the upload token.
+- **Carried** in dashboard links and their QR codes (`#v=<deployment>.<key>`, 9.2), after the `#`. A viewer's browser keeps
+  it in `localStorage` after the first visit.
+- **Allows** exactly one request: the dashboard's data (9.3). That is every non-deleted pitch and plate appearance (without
+  IDs or recorder names), the whole PlayByPlay and the video links. Not the Rosters tab, not the upload token, no
+  writing, no other tab.
+- **To change it**: **Settings → Team dashboard → Replace the link…** asks the script to make a new key (`renew`). Every
+  dashboard link shared so far stops working on every device (the page then says so and forgets it); share the new link
+  with the team. Deleting `VIEW_KEY` in Script properties does the same: the next request makes a new one. Recorders
+  are unaffected.
+
+### 13.5 The sheet code and the script's address
+
+The **address** (`https://script.google.com/macros/s/<deployment ID>/exec`) is in every link and phone. It isn't a key:
+without the token or viewer key, a request to it only learns the script's version. It is still kept out of the public
+repository (the deploy workflow reads it from a secret, and hides it from its logs), so nobody can find it without a
+link.
+
+The **sheet code** ([`sheetCode`](../js/connect.js)) is six characters worked out from the address. It isn't secret. The
+app and the dashboard show it before trusting a new link, so a link that points at someone else's script is caught by
+comparing codes (8.7, 9.2).
+
+### 13.6 Video timestamps: the sheet's own sign-in
+
+The **Video timestamps** window (7.7) doesn't use either key. It opens inside the sheet, so only someone signed in to
+Google **with edit access to the sheet** can open it. Its functions run through `google.script.run`, as that person,
+with their access. That is why it can write to VideoTimes and Videos without any token.
+
+### 13.7 Deploying: GitHub and clasp
+
+Two routes put new code live, and both are guarded by who can merge to `main`:
+
+- **The app and the dashboard**: GitHub Pages publishes `main` as it is (16.2). Anyone with **write access to the
+  repository** can merge, so treat collaborators as people you'd trust with the app and its users. The published files
+  contain no secrets.
+- **The script**: the workflow (17.4) signs in to Google as you with **clasp**. Its sign-in, `CLASPRC_JSON`, is a Google
+  OAuth token that can edit and deploy **every** Apps Script project in your account, so it is a password in all but
+  name. It lives, with the script and deployment IDs, as **environment secrets** in the GitHub environment
+  `apps-script`, which only workflows on `main` may use: not other branches, not pull requests from forks. Secret values
+  never appear in the repository or the logs, and the workflow deletes its copy when it ends.
+  - To cut it off: remove *clasp* at <https://myaccount.google.com/permissions>, and delete the secret. To renew it after
+    an expiry: `npx @google/clasp@3.4.1 login` and paste the new `.clasprc.json` into the secret (README, step 7).
+  - The upload token and viewer key are never involved in deploying: they stay in Script properties.
+
+### 13.8 The claude.ai dashboard
+
+The claude.ai dashboard (9.10) doesn't use the script at all. It is a private page on claude.ai, shared with specific
+people, that reads the sheet through the **Google Sheets connector**: each reader's query runs with **their own** Google
+access, so the sheet must be shared with them. Taking away their sheet access, or their access to the page, cuts them
+off.
+
+### 13.9 Other defences
+
+- **Content security policies.** The app's page ([`index.html`](../index.html)) may only run its own script files (no
+  inline or outside scripts), load its own styles and images, and talk only to itself and Google Apps Script. The
+  dashboard has its own, which also allows YouTube's player (9.9). Even if some text slipped past escaping, the browser
+  would refuse to run it, and nothing could send a key anywhere else. The browser test checks an outside script is
+  blocked.
+- **Referrers.** The app sends none. The dashboard sends only the site's origin, never the `#…` (YouTube needs it).
+- **Escaping** (12.2): names can't inject code into either page.
+- **Strict link validation** (8.3, 9.2): exact Apps Script addresses only; every new connection confirmed with the sheet
+  code.
+- **The QR codes** are drawn on the phone with a pinned, checked library, and shown only briefly (8.7).
+- **HTTPS everywhere**: GitHub Pages and Google only serve HTTPS.
+- **The lock** in `doPost` (7.5) keeps two phones from overwriting each other's rows; **upserts by ID** (2.11) keep retries
+  from creating duplicates.
+
+### 13.10 If something leaks
+
+| Leaked | Someone could | Do this |
 |---|---|---|
-| The Apps Script address | Your Apps Script deployment; Settings on each connected phone; inside setup links | You, and everyone you've sent a link |
-| The token | Script properties; Settings on each connected phone; inside setup links | Same |
-| Pitch data | The sheet; each phone's own games | You; recorders see only their own games; viewers you share the sheet with; anyone with the dashboard link (7.9) |
-| The viewer key | Script properties (`VIEW_KEY`); inside dashboard links; each device that opened one | Everyone you've sent a dashboard link. It only reads |
+| A setup link or its QR code | Add rows to your sheet, read the rosters, open the dashboard | Change the upload token (13.3); also replace the dashboard link if you don't want them reading (13.4) |
+| A dashboard link | Read what the dashboard shows | **Replace the link…** (13.4) |
+| `CLASPRC_JSON` | Change any of your Apps Script projects | Revoke clasp (13.7) at once, then log in again |
+| Editor access given by mistake | Anything the owner can | Remove it in **Share**, then change both keys |
 
-**What someone with the link can do:** add rows to your sheet, or overwrite a row *if they know its ID*. They can also **download the Rosters tab** (player names and numbers, 3.2.1). They **cannot read** anything else through the script: uploads only answer "ok" or an error, never pitch data. They can't touch other tabs, other files or your Google account.
+### 13.11 What is public, and personal data
 
-**What someone without the link can do:** nothing. Without the token every upload is refused, and the address alone isn't enough.
-
-**What someone with a dashboard link can do:** read what the dashboard shows (7.9): every pitch, plate appearance and play-by-play row, and the video links. Not the Rosters tab, not the token, not any write. If one leaks, **Settings → Team dashboard → Replace the link…** and share the new one.
-
-**If a link or QR code leaks:** change the token (7.4). Every phone with the old one stops uploading (their pitches stay safe on those phones as pending), and you send a fresh link to the people who should have it.
-
-### 12.3 Other defences
-
-- **A content security policy** ([`index.html`](../index.html)). It tells the browser the page may only run its own script files (no inline or outside scripts), load its own styles and images, and talk only to itself and Google Apps Script (`script.google.com`, plus `script.googleusercontent.com`, where Google sends the replies). Even if some text ever slipped past escaping, the browser would refuse to run it, and nothing in the page could send the token anywhere else. The browser test checks that an outside script is blocked.
-- **No referrer** (`<meta name="referrer" content="no-referrer">`): requests never tell other sites which page they came from.
-- **Escaping** (11.2): names can't inject code into the page.
-- **Setup links are validated strictly** (8.3): exact Apps Script addresses only, and every new connection is confirmed with the sheet code.
-- **The token is hidden on screen** in Settings (shown as dots), and the setup link is shown masked (8.5).
-- **The QR code** is drawn locally with a pinned, checked library, and shown only briefly (8.7).
-- **HTTPS everywhere**: GitHub Pages and Google only serve HTTPS, so nothing travels readable on the stadium Wi-Fi.
-- **The lock** in `doPost` (7.5) keeps two phones from overwriting each other's rows.
-- **Upserts by ID** (2.11) keep retries from creating duplicate rows.
-
-### 12.4 Personal data
-
-The sheet holds player names and jersey numbers (in the rows and the Rosters tab), plus the names recorders type. Every connected phone keeps a copy of the rosters. Nothing else about anyone: no locations, no contacts, no tracking. The app has no analytics and talks to nobody but GitHub (for its own files) and your Apps Script.
+- **Public:** the code (the repository), and the app's and dashboard's addresses. Without a link, the app just stores
+  pitches on that person's own phone, and the dashboard asks for a link.
+- **Personal data:** the sheet holds player names and jersey numbers (in the rows and the Rosters tab) and the names
+  recorders type. Every connected phone keeps a copy of the rosters; the dashboard shows names to anyone with its link.
+  Nothing else about anyone: no locations, no contacts, no tracking. Neither page has analytics; they talk only to GitHub
+  (their own files), your Apps Script, and, for the dashboard, YouTube.
 
 ---
 
-## 13. What happens when things go wrong
+## 14. What happens when things go wrong
 
 | Situation | What happens | Data safe? |
 |---|---|---|
@@ -993,16 +1256,20 @@ The sheet holds player names and jersey numbers (in the rows and the Rosters tab
 | Website data cleared, or the app's icon deleted | The phone's copy of the data is gone | Uploaded data is in the sheet; pending pitches only if backed up |
 | Two phones record the same game | Both upload; rows are told apart by `recorded_by`. Each phone has its own count and order, so they don't sync with each other | Yes, but you'd have double pitches |
 | Google has an outage | Like no signal | Yes |
-| A new app version is released mid-game | Nothing changes until you go back to the games list; then the app reloads into the new version (10.2) | Yes |
-| *The sheet script is out of date* | The app needs a newer `Code.gs` than the one deployed (7.5) | Yes, pending on phones. Deploy the new script (16) |
-| A script deploy fails | The workflow stops with a reason (16.7); the old script keeps serving | Yes |
+| A new app version is released mid-game | Nothing changes until you go back to the games list; then the app reloads into the new version (11.2) | Yes |
+| *The sheet script is out of date* | The app needs a newer `Code.gs` than the one deployed (7.5) | Yes, pending on phones. Deploy the new script (17) |
+| A script deploy fails | The workflow stops with a reason (17.7); the old script keeps serving | Yes |
 | *Rosters not loaded* on New game | No signal, wrong token, or an old script; the saved copy is used if there is one | Yes. Type the lineup by hand |
 | Rosters tab edited mid-season | New games use the new names; games already started keep their copy (3.2.1) | Yes |
-| *Error: Script error.* when pressing Share | Came from Safari's own scripts, not the app; now hidden (11.2) | Yes |
+| A dashboard link says it *no longer works* | The link was replaced (13.4) | Yes. Ask for the new link |
+| The dashboard says the sheet's script is older than it | `Code.gs` before version 8 is deployed | Yes. Deploy the new script (17) |
+| A video won't play in the dashboard | YouTube can't load, or the owner blocks embedding | Yes. The page links to the video on YouTube |
+| A plate appearance has no ▶, or *Follow the video* skips it | It has no video time, or its time is marked ⚠ (7.7) | Yes. Stamp it in **Video timestamps** |
+| *Error: Script error.* when pressing Share | Came from Safari's own scripts, not the app; now hidden (12.2) | Yes |
 
 ---
 
-## 14. Limits and things not built yet
+## 15. Limits and things not built yet
 
 | Limit | Today | Possible fix |
 |---|---|---|
@@ -1020,16 +1287,24 @@ The sheet holds player names and jersey numbers (in the rows and the Rosters tab
 
 ---
 
-## 15. Testing, changing and releasing
+## 16. Testing, changing and releasing
 
-### 15.1 The tests
+### 16.1 The tests
 
-- **Unit tests** ([`tests/game.test.js`](../tests/game.test.js), [`tests/apps-script.test.js`](../tests/apps-script.test.js), [`tests/sync.test.js`](../tests/sync.test.js), [`tests/roster.test.js`](../tests/roster.test.js), [`tests/connect.test.js`](../tests/connect.test.js), [`tests/vendor.test.js`](../tests/vendor.test.js)): run `npm test`. They check the count rules, walks, strikeouts, balls in play and their outcomes, outs and the switch of half-inning, both teams' lineups and pitch counts, old one-team games, undo, substitutions, pitcher changes, both sheet rows, that the column lists match the script, the script itself against a fake spreadsheet (16.3), the sync error messages and the empty Test connection upload, roster clean-up and name/number matching, setup-link encoding and validation, and the QR library's checksum. Plain Node.js, nothing to install.
-- **Browser test** ([`tests/e2e.cjs`](../tests/e2e.cjs)): drives the real app in a headless Chrome pretending to be an iPhone and an iPad, with Google replaced by a fake that records what it receives. It plays a whole sequence: settings, setup with a 9-man lineup, a strikeout, a walk, a ball in play through the decision tree (with **Back**), undoing the outcome and then the pitch, a fly out, a substitution and pitcher change, the upload (checking 12 unique rows and one tombstone), going offline, recording, **reloading with no network** (the app must open from the service worker cache, with all data), coming back online, **Next batter → Out by rule** as the third out switching to the home team, the outs and inning buttons, opening a setup link on a second phone, re-opening it, rejecting a bad link, pasting a good one on a third phone, and the Home Screen hand-over from 8.4: the setup link appearing in the address after connecting, an "installed app" with empty storage connecting itself from that address, and an installed app opened at the bare address showing the paste box without reloading in a loop, **Copy setup link** and **Paste & connect** through the clipboard, the version and *Opened at* lines in Settings, and the error filter (an outside *Script error.* is hidden, an error from the app's own file is shown). For rosters it checks that a script from before rosters gets *out of date* rather than an empty list, that rosters download and the starting-9 picker fills the form, that typed names and numbers are matched, and that **Lineup / Subs** offers the bench. On an emulated Android phone (Pixel 7) it checks that there's no clipboard step, that Chrome's install offer becomes a working **Install app** button, that Back first closes a dialog and then returns from a game to the games list, and that the tracker's badge is compact and opens *Upload status* when tapped. Updates (10.2) were checked separately by serving a copy of the app and releasing a new `VERSION` while a page was open: on the home screen it reloads into the new version; during a game it waits until you exit to the games list. It also takes screenshots of each screen.
+- **Unit tests**, run with `npm test` (plain Node.js, nothing to install):
+  - [`tests/game.test.js`](../tests/game.test.js), [`tests/gameid.test.js`](../tests/gameid.test.js): the count rules, walks, strikeouts, balls in play and their outcomes, outs and the switch of half-inning, both teams' lineups and pitch counts, old one-team games, undo, substitutions, pitcher changes, both sheet rows, game IDs and their dates, and that the column lists match the script;
+  - [`tests/apps-script.test.js`](../tests/apps-script.test.js): the real `Code.gs` against a fake spreadsheet (17.3);
+  - [`tests/sync.test.js`](../tests/sync.test.js), [`tests/roster.test.js`](../tests/roster.test.js): sync error messages and the empty Test connection upload; roster clean-up and matching;
+  - [`tests/connect.test.js`](../tests/connect.test.js): setup and dashboard links, their validation, that neither is taken for the other, and the sheet code;
+  - [`tests/dashboard.test.js`](../tests/dashboard.test.js), [`tests/winprob.test.js`](../tests/winprob.test.js): the dashboard's plays, at-bat order, every rate, game-by-game, the run and win model, and the leaderboards;
+  - [`tests/vendor.test.js`](../tests/vendor.test.js): the QR library's checksum.
+- **Browser test** ([`tests/e2e.cjs`](../tests/e2e.cjs)): drives the real app in a headless Chrome pretending to be an iPhone and an iPad, with Google replaced by a fake that records what it receives. It plays a whole sequence: settings, setup with a 9-man lineup, a strikeout, a walk, a ball in play through the decision tree (with **Back**), undoing the outcome and then the pitch, a fly out, a substitution and pitcher change, the upload (checking 12 unique rows and one tombstone), going offline, recording, **reloading with no network** (the app must open from the service worker cache, with all data), coming back online, **Next batter → Out by rule** as the third out switching to the home team, the outs and inning buttons, opening a setup link on a second phone, re-opening it, rejecting a bad link, pasting a good one on a third phone, and the Home Screen hand-over from 8.4: the setup link appearing in the address after connecting, an "installed app" with empty storage connecting itself from that address, and an installed app opened at the bare address showing the paste box without reloading in a loop, **Copy setup link** and **Paste & connect** through the clipboard, the version and *Opened at* lines in Settings, and the error filter (an outside *Script error.* is hidden, an error from the app's own file is shown). For rosters it checks that a script from before rosters gets *out of date* rather than an empty list, that rosters download and the starting-9 picker fills the form, that typed names and numbers are matched, and that **Lineup / Subs** offers the bench. On an emulated Android phone (Pixel 7) it checks that there's no clipboard step, that Chrome's install offer becomes a working **Install app** button, that Back first closes a dialog and then returns from a game to the games list, and that the tracker's badge is compact and opens *Upload status* when tapped. Updates (11.2) were checked separately by serving a copy of the app and releasing a new `VERSION` while a page was open: on the home screen it reloads into the new version; during a game it waits until you exit to the games list. It also takes screenshots of each screen.
+
+The dashboard was checked in the same headless Chrome, on an emulated iPhone in dark mode and on a desktop, against a fake script with sample games: the link and sheet-code question, every tab, the header and the sticky video, *Follow the video* with a stand-in YouTube player, the names shrinking in wide tables, and a replaced link. Those checks aren't part of `tests/e2e.cjs` yet.
 
 To run the browser test, serve the folder on port 8765 (`python3 -m http.server 8765`) and run `node tests/e2e.cjs <folder for screenshots>`. It needs Playwright and Chromium installed.
 
-### 15.2 How a change to the app goes live
+### 16.2 How a change to the app goes live
 
 There is no build: the files in the repository are exactly the files phones download. "Releasing" is merging.
 
@@ -1037,53 +1312,60 @@ There is no build: the files in the repository are exactly the files phones down
 2. Run both test suites.
 3. Open a pull request on GitHub and merge it into `main`.
 4. GitHub Pages republishes `main` within a minute or two.
-5. Each phone picks up the new version the next time the app is opened with signal (10.2).
+5. Each phone picks up the new version the next time the app is opened with signal (11.2).
 
-A change to `apps-script/Code.gs` takes a second route, to Google rather than to GitHub Pages. Section 16 covers it.
+A change to `apps-script/Code.gs` takes a second route, to Google rather than to GitHub Pages. Section 17 covers it.
 
-### 15.3 Rules for changing the code
+### 16.3 Rules for changing the code
 
 From [`CLAUDE.md`](../CLAUDE.md):
 
 - Plain files, no build step, no libraries, unless there's a strong reason.
 - Always save to IndexedDB **before** updating the screen; never delete local data after sync.
 - Bump `VERSION` in `sw.js` on every change to an app file; add new files to `ASSETS`.
-- `PITCH_COLUMNS`/`PA_COLUMNS` (`js/game.js`) and `HEADERS`/`PA_HEADERS` (`Code.gs`) must match, and the Summary formulas' column letters must follow any move (16.2).
-- Bump `VERSION` in `Code.gs` on every change to that file (16.2).
-- `index.html` has a strict content security policy (12.3): loading anything from a new address needs a deliberate change to it.
+- `PITCH_COLUMNS`/`PA_COLUMNS` (`js/game.js`) and `HEADERS`/`PA_HEADERS` (`Code.gs`) must match, and the Summary formulas' column letters must follow any move (17.2).
+- Bump `VERSION` in `Code.gs` on every change to that file (17.2).
+- `index.html` has a strict content security policy (13.9): loading anything from a new address needs a deliberate change to it.
 - Never edit `js/vendor/qrcodegen.js` by hand (8.7).
 - Keep setup-link validation strict, and always confirm a new connection with the sheet code (8.3).
+- `dashboard/` has its own security policy and isn't in the service worker; it imports `js/connect.js` and `js/game.js`, so keep those free of page and storage code; `winprob.js` follows the claude.ai dashboard's model, so change both together; the dashboard reads with the viewer key, never the token (9).
 
-### 15.4 Every file
+### 16.4 Every file
 
 | File | Lines | What it is |
 |---|---|---|
-| [`index.html`](../index.html) | 25 | The page shell and its security policy (12.3) |
+| [`index.html`](../index.html) | 25 | The app's page shell and its security policy (13.9) |
 | [`manifest.webmanifest`](../manifest.webmanifest) | 29 | Name, icons, full-screen mode (2.7) |
-| [`sw.js`](../sw.js) | 47 | Offline cache (10) |
-| [`css/app.css`](../css/app.css) | 343 | All styling (11.3) |
-| [`js/app.js`](../js/app.js) | 1,251 | Screens, taps, startup, settings, rosters picker, setup links (3, 11) |
-| [`js/game.js`](../js/game.js) | 418 | Baseball rules and the sheet rows (4) |
+| [`sw.js`](../sw.js) | 47 | The app's offline cache (11) |
+| [`css/app.css`](../css/app.css) | 384 | The app's styling (12.3) |
+| [`js/app.js`](../js/app.js) | 1,689 | Screens, taps, startup, settings, rosters picker, setup and dashboard links (3, 8, 12) |
+| [`js/game.js`](../js/game.js) | 519 | Baseball rules, the sheet rows, game dates (4); also used by the dashboard |
 | [`js/db.js`](../js/db.js) | 117 | Phone storage (5) |
-| [`js/sync.js`](../js/sync.js) | 137 | Uploads, Test connection, roster download (6, 3.2.1) |
-| [`js/roster.js`](../js/roster.js) | 38 | Roster clean-up and matching (3.2.1) |
-| [`js/backup.js`](../js/backup.js) | 80 | Backup, import, CSV (9) |
-| [`js/connect.js`](../js/connect.js) | 96 | Setup link encoding, validation, sheet code (8) |
+| [`js/sync.js`](../js/sync.js) | 153 | Uploads, Test connection, rosters, the viewer key (6) |
+| [`js/roster.js`](../js/roster.js) | 38 | Roster clean-up and matching |
+| [`js/backup.js`](../js/backup.js) | 80 | Backup, import, CSV (10) |
+| [`js/connect.js`](../js/connect.js) | 134 | Setup and dashboard links, validation, sheet code (8, 9.2); also used by the dashboard |
 | [`js/vendor/qrcodegen.js`](../js/vendor/qrcodegen.js) | 846 | QR code library, vendored and pinned (8.7) |
-| [`apps-script/Code.gs`](../apps-script/Code.gs) | 274 | The Google side (7, 16) |
-| [`.github/workflows/deploy-apps-script.yml`](../.github/workflows/deploy-apps-script.yml) | 99 | Deploys `Code.gs` to Google on every change on `main` (16.4) |
+| [`dashboard/index.html`](../dashboard/index.html) | 23 | The dashboard's page shell and security policy (9.9) |
+| [`dashboard/dash.js`](../dashboard/dash.js) | 1,210 | The dashboard page: links, reading, every tab, charts, video (9) |
+| [`dashboard/model.js`](../dashboard/model.js) | 494 | Plays, games and every number (9.4, 9.5) |
+| [`dashboard/winprob.js`](../dashboard/winprob.js) | 415 | Run expectancy and win probability (9.6) |
+| [`dashboard/leaders.js`](../dashboard/leaders.js) | 214 | Leaderboards (9.7) |
+| [`dashboard/dash.css`](../dashboard/dash.css) | 336 | The dashboard's styling |
+| [`apps-script/Code.gs`](../apps-script/Code.gs) | 1,005 | The Google side: uploads, rosters, keys, the dashboard's data, video timestamps (7, 17) |
+| [`.github/workflows/deploy-apps-script.yml`](../.github/workflows/deploy-apps-script.yml) | 99 | Deploys `Code.gs` to Google on every change on `main` (17.4) |
 | [`icons/`](../icons) | | App icons |
-| [`tests/`](../tests) | | Unit and browser tests (15.1) |
-| [`README.md`](../README.md) | | Setup instructions |
+| [`tests/`](../tests) | | Unit and browser tests (16.1) |
+| [`README.md`](../README.md) | | What it is, setup, and access at a glance |
 | [`CLAUDE.md`](../CLAUDE.md) | | Rules for changing the code |
 
 ---
 
-## 16. Editing the Google script: how the build works
+## 17. Editing the Google script: how the build works
 
-The app itself has no build (15.2). The Google script is the one part that has to be *built and shipped* somewhere else: the copy in this repository does nothing until it has been copied into your Apps Script project and deployed. This section is everything you need to change [`apps-script/Code.gs`](../apps-script/Code.gs) safely.
+The app itself has no build (16.2). The Google script is the one part that has to be *built and shipped* somewhere else: the copy in this repository does nothing until it has been copied into your Apps Script project and deployed. This section is everything you need to change [`apps-script/Code.gs`](../apps-script/Code.gs) safely.
 
-### 16.1 The pieces on Google's side
+### 17.1 The pieces on Google's side
 
 Four Google terms, each with a real job here:
 
@@ -1091,10 +1373,10 @@ Four Google terms, each with a real job here:
 |---|---|---|
 | **Project** | The script attached to the sheet: what you see under **Extensions → Apps Script**. Holds the code files and a manifest (`appsscript.json`) | Exactly two files: `Code.gs` and `appsscript.json`. Its **script ID** is under ⚙ *Project Settings* |
 | **Version** | A frozen, numbered snapshot of the project's code. Saving in the editor does **not** make one | A new one per deploy |
-| **Deployment** | A public address (`…/macros/s/<deployment ID>/exec`) pointing at one version | **One**, made once by hand. Its address is in every phone's settings and every setup link |
-| **Script properties** | Private key–value settings stored with the project, outside the code | The `TOKEN` (7.4) |
+| **Deployment** | A public address (`…/macros/s/<deployment ID>/exec`) pointing at one version | **One**, made once by hand. Its address is in every phone's settings and every setup and dashboard link |
+| **Script properties** | Private key–value settings stored with the project, outside the code | `TOKEN`, the upload token, and `VIEW_KEY`, the viewer key (13.3, 13.4) |
 
-The key point: **the phones talk to the deployment, and the deployment runs a version, not the latest code.** Editing or even saving the code changes nothing for the phones. Only pointing the *existing* deployment at a *new* version does. Creating a *new deployment* instead gives a new address, which would disconnect every phone (13).
+The key point: **the phones talk to the deployment, and the deployment runs a version, not the latest code.** Editing or even saving the code changes nothing for the phones. Only pointing the *existing* deployment at a *new* version does. Creating a *new deployment* instead gives a new address, which would disconnect every phone (14).
 
 ```mermaid
 flowchart LR
@@ -1104,22 +1386,22 @@ flowchart LR
   PHONES[Phones] -->|POST| DEP
 ```
 
-### 16.2 Making a change: the checklist
+### 17.2 Making a change: the checklist
 
 1. **Edit [`apps-script/Code.gs`](../apps-script/Code.gs) in the repository**, never in the Apps Script editor. With automatic deploys on, the repository is the source of truth: an edit made only in the editor is overwritten by the next deploy.
-2. **Bump `VERSION`** at the top of the file ([line 22](../apps-script/Code.gs#L22)), on every change, however small. It's how the deploy proves the new code is live (16.4). Forgetting it makes the deploy fail even though the code went up.
+2. **Bump `VERSION`** at the top of the file ([line 22](../apps-script/Code.gs#L22)), on every change, however small. It's how the deploy proves the new code is live (17.4). Forgetting it makes the deploy fail even though the code went up.
 3. **If you add, remove or move a column:**
    - change `HEADERS` / `PA_HEADERS` in `Code.gs` **and** `PITCH_COLUMNS` / `PA_COLUMNS` in [`js/game.js`](../js/game.js#L99) the same way (the script's lists are the app's plus `synced_at` at the end). A unit test fails if they differ;
    - fix the column letters in the Summary `QUERY` formulas ([line 78](../apps-script/Code.gs#L78)) and in the comment above them (7.6);
    - add the column to `TEXT_COLUMNS` if it holds codes or numbers that must stay text;
-   - you **don't** need to migrate existing sheets: the first upload after the deploy does it (16.5). Just never write code that relies on column positions in an old sheet.
+   - you **don't** need to migrate existing sheets: the first upload after the deploy does it (17.5). Just never write code that relies on column positions in an old sheet.
 4. **If the app needs the new script** (it sends something an older script would ignore or get wrong), raise `SCRIPT_VERSION` in [`js/sync.js`](../js/sync.js#L14) to the new `VERSION`, and bump `VERSION` in `sw.js` because `sync.js` changed. For a feature an old script simply can't serve, but which shouldn't block uploads, use a separate minimum, as rosters do (`ROSTER_SCRIPT_VERSION`, 7.5).
-5. **Run `npm test`.** [`tests/apps-script.test.js`](../tests/apps-script.test.js) runs the real `Code.gs` (16.3).
-6. **Open a pull request and merge it into `main`.** The merge ships both halves: GitHub Pages serves the app files, and the workflow deploys the script (16.4).
+5. **Run `npm test`.** [`tests/apps-script.test.js`](../tests/apps-script.test.js) runs the real `Code.gs` (17.3).
+6. **Open a pull request and merge it into `main`.** The merge ships both halves: GitHub Pages serves the app files, and the workflow deploys the script (17.4).
 
-**Keep the script backward compatible.** Phones update at different times (10.2), so for a while old apps talk to the new script. They send rows without the new fields; [`upsert`](../apps-script/Code.gs#L239) leaves those cells blank (or fills the default from `DEFAULTS`, like `session_type` = `game`), which is fine. The reverse, a new app talking to an old script, is what `SCRIPT_VERSION` blocks, safely: pitches just wait on the phone (7.5, *Versions*).
+**Keep the script backward compatible.** Phones update at different times (11.2), so for a while old apps talk to the new script. They send rows without the new fields; [`upsert`](../apps-script/Code.gs#L239) leaves those cells blank (or fills the default from `DEFAULTS`, like `session_type` = `game`), which is fine. The reverse, a new app talking to an old script, is what `SCRIPT_VERSION` blocks, safely: pitches just wait on the phone (7.5, *Versions*).
 
-### 16.3 Testing the script without Google
+### 17.3 Testing the script without Google
 
 `Code.gs` uses Google's objects (`SpreadsheetApp`, `PropertiesService`, `LockService`, `ContentService`…), which don't exist outside Google. [`tests/apps-script.test.js`](../tests/apps-script.test.js) supplies small imitations of them: a `FakeSheet` that keeps cells in memory and throws like the real one when a range goes past the sheet's edge, a script lock, script properties with a token. It then loads the real `Code.gs` text into an isolated Node.js context (`node:vm`) and calls `setup`, `doPost` and `doGet` as Google would. The tests cover:
 
@@ -1128,13 +1410,15 @@ flowchart LR
 - a wrong token refused;
 - the first upload after a deploy that changed the columns updating the layout by itself, and an empty upload (Test connection) doing the same;
 - a sheet with a column the script doesn't know: upload refused with the reason, nothing changed;
-- the Rosters template, reading filled blocks, needing the token, and never rewriting a tab someone typed into.
+- the Rosters template, reading filled blocks, needing the token, and never rewriting a tab someone typed into;
+- the video timestamps: stamping, the `video` formula, a play that changed being flagged, the at-bat order;
+- the keys: the viewer key needing the token, being made once and replaced on `renew`; the dashboard reading only with the viewer key, never with the token, and the viewer key never uploading or reading rosters; the dashboard's data found by header name, without deleted rows or the video formula.
 
 A separate test in [`tests/game.test.js`](../tests/game.test.js#L201) reads `HEADERS` and `PA_HEADERS` out of `Code.gs` and compares them with the app's column lists. What the fakes can't show is Google's own behaviour (permissions, quotas, how Sheets formats a value), so after a deploy that changes the layout, look at the sheet once.
 
 The deploy workflow also runs `node --check` on the file before sending it anywhere, so a syntax error never reaches Google.
 
-### 16.4 The automatic deploy, step by step
+### 17.4 The automatic deploy, step by step
 
 [`.github/workflows/deploy-apps-script.yml`](../.github/workflows/deploy-apps-script.yml) is a GitHub Actions workflow. It runs on GitHub's machines when a push to `main` changes `apps-script/Code.gs`, or when started by hand (**Actions → Deploy Apps Script → Run workflow**). Two deploys never run at once (`concurrency`), and a running one is never cancelled halfway.
 
@@ -1153,9 +1437,9 @@ It uses **clasp**, Google's command-line tool for Apps Script, pinned to an exac
 
 Output that would repeat the deployment ID is hidden, so it doesn't appear in the public logs.
 
-**Where the secrets live.** The three values are **environment secrets** in a GitHub environment called `apps-script` that only the `main` branch may use. A workflow edited on another branch, or a pull request from a fork, can't read them. `CLASPRC_JSON` is the sensitive one: it can edit all of the owner's Apps Script projects, so treat it like a password. The token (7.4) is never involved: it stays in Script properties. One-time setup is in the [README](../README.md#automatic-script-updates-optional).
+**Where the secrets live.** The three values are **environment secrets** in a GitHub environment called `apps-script` that only the `main` branch may use. A workflow edited on another branch, or a pull request from a fork, can't read them. `CLASPRC_JSON` is the sensitive one: it can edit all of the owner's Apps Script projects, so treat it like a password (13.7). The upload token and viewer key are never involved: they stay in Script properties. One-time setup is in the [README](../README.md#7-automatic-script-updates-optional).
 
-### 16.5 What happens after the deploy
+### 17.5 What happens after the deploy
 
 Nothing needs running by hand. On the next request that writes (a pitch upload, or **Test connection**), `doPost` notices the sheet's headers don't match the new ones ([line 209](../apps-script/Code.gs#L209)) and, under the lock, runs [`updateLayout`](../apps-script/Code.gs#L70):
 
@@ -1165,7 +1449,7 @@ Nothing needs running by hand. On the next request that writes (a pitch upload, 
 
 Meanwhile, on the phones: an app that requires the new script shows *the sheet script is out of date* until the deploy is live, keeping everything pending, then uploads on its next try (every 30 s, 6.2).
 
-### 16.6 Deploying by hand
+### 17.6 Deploying by hand
 
 Without the workflow (or to fix things when it's stuck):
 
@@ -1176,7 +1460,7 @@ Without the workflow (or to fix things when it's stuck):
 
 Never use **Deploy → New deployment** for an update: that creates a second address, and every phone and setup link still points at the first.
 
-### 16.7 When the deploy fails
+### 17.7 When the deploy fails
 
 | Message in the workflow | Cause | Fix |
 |---|---|---|
@@ -1190,21 +1474,21 @@ A failed deploy is safe: either nothing changed in Google, or the new code is li
 
 ---
 
-## 17. Glossary
+## 18. Glossary
 
 | Term | Meaning |
 |---|---|
 | **Apps Script** | JavaScript that runs on Google's servers, attached to a Google file (7.1) |
-| **clasp** | Google's command-line tool for uploading and deploying Apps Script projects (16.4) |
-| **Deployment / version** | A fixed public address for the script, and the frozen snapshot of code it runs (16.1) |
+| **clasp** | Google's command-line tool for uploading and deploying Apps Script projects (17.4) |
+| **Deployment / version** | A fixed public address for the script, and the frozen snapshot of code it runs (17.1) |
 | **Base64url** | A way to write any data with only letters, digits, `-` and `_` (8.1) |
-| **Cache-first** | Answer from the stored copy; only use the network when there isn't one (10.1) |
+| **Cache-first** | Answer from the stored copy; only use the network when there isn't one (11.1) |
 | **CORS / preflight** | The browser's rules for talking to another origin, and the permission check it sends first (2.9) |
 | **Dirty / pending** | Changed on the phone, not yet confirmed by the sheet (6.1) |
 | **Durability (strict)** | Don't call a write done until it's on disk (2.5) |
 | **Event sourcing / replay** | Storing what happened and recomputing the state from it (2.12) |
 | **Fragment** | The part of an address after `#`; never sent to the server (8.2) |
-| **GitHub Actions** | GitHub's automation; runs the script deploy (16.4) |
+| **GitHub Actions** | GitHub's automation; runs the script deploy (17.4) |
 | **GitHub Pages** | GitHub's free static file hosting (2.2) |
 | **Idempotent** | Doing it twice equals doing it once (2.11) |
 | **IndexedDB** | The database built into every browser (2.5) |
@@ -1219,7 +1503,13 @@ A failed deploy is safe: either nothing changed in Google, or the new code is li
 | **Service worker** | A script that sits between the app and the network (2.6, 10) |
 | **Static hosting** | Hosting that only hands out files and runs no code (2.2) |
 | **Tombstone** | A record kept, marked deleted, so the deletion can be passed on (5.5) |
-| **Token** | The shared secret that lets phones write to your sheet (7.4) |
+| **Upload token** | The secret that lets phones write to your sheet; carried in setup links (13.3) |
+| **Viewer key** | The secret that lets the team dashboard read; carried in dashboard links (13.4) |
+| **Sheet code** | Six characters that identify the sheet, shown before trusting a link; not a secret (8.7) |
+| **At-bat order** | Each plate appearance, then the plays that happened during it (9.4) |
+| **QAB** | Quality at-bat (9.5) |
+| **RE24, WPA, leverage** | Change in run expectancy; win probability added; how tense a moment is (9.6) |
+| **Script properties** | The script's private settings, where the keys live (17.1) |
 | **Transaction** | A bundle of database changes that happens completely or not at all (2.5) |
 | **Upsert** | Update the row if it exists, insert it if it doesn't (2.11, 7.5) |
 | **UUID** | A random ID so large that two never collide (2.11) |
