@@ -184,9 +184,13 @@ cell (opening the window puts it back).
   who moved the game, team totals, and how the run model is worked out.
 - **Hitters / Pitchers:** the whole team or one player. Every rate (quality at-bats, whiff, chase, freeze; strike,
   first-pitch, 1-1, putaway, quick-out, leadoff…) with a player's set beside the team's, game-by-game charts, a chart
-  comparing the team on any rate, a sortable table of everyone, pitch types, swing rate by count, batter vs pitcher,
-  and every plate appearance with a ▶ to watch it.
-- **Leaders:** the good and bad leaderboards for a team's hitters and pitchers, with streaks across games.
+  comparing the team on any rate, a sortable table of everyone, pitch types, swing rate by count, every number against
+  each pitcher (Hitters) or batter (Pitchers), and every plate appearance with a ▶ to watch it. A player's numbers are
+  green where they beat the team's and red where they trail it, by what is good for that player (a hitter's low whiff
+  rate is green).
+- **Leaders:** the good and bad leaderboards for a team's hitters and pitchers, or for all teams at once, with streaks
+  across games.
+- The browser's back gesture or button steps back through the tabs, games, teams and players you opened.
 - **Games / Live BP / Both** at the top filters every tab. Wide tables keep the names pinned and shrink them to
   initials as you scroll sideways.
 

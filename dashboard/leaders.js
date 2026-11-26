@@ -85,14 +85,14 @@ export function longestRun(list, good) {
 // Top 5 of one board, highest first unless `low`. Zero only counts on a low board.
 export function top(rows, low) {
   const ok = rows.filter((r) => r.value != null && (low || r.value > 0));
-  ok.sort((a, b) => (low ? a.value - b.value : b.value - a.value) || (b.n ?? 0) - (a.n ?? 0) || String(a.who).localeCompare(String(b.who)));
+  ok.sort((a, b) => (low ? a.value - b.value : b.value - a.value) || (b.n ?? 0) - (a.n ?? 0) || String(a.who).localeCompare(String(b.who)) || String(a.team ?? '').localeCompare(String(b.team ?? '')));
   const out = [];
   let rank = 0;
   let prev;
   ok.slice(0, 5).forEach((r, i) => {
     if (r.value !== prev) rank = i + 1;
     prev = r.value;
-    out.push({ rank, who: r.who, value: r.value, detail: r.detail || '', active: !!r.active });
+    out.push({ rank, who: r.who, team: r.team ?? null, value: r.value, detail: r.detail || '', active: !!r.active });
   });
   return out;
 }
@@ -121,7 +121,8 @@ function agg(ps) {
 }
 
 // Every board for one side: 'hit' (the team's hitters) or 'pit' (its pitchers). `plays` are
-// already filtered to the sessions picked; `games` gives the order.
+// already filtered to the sessions picked; `games` gives the order. `team` null ranks everybody
+// in every team (each row then says whose team it is).
 export function leaderboards(plays, games, side, team) {
   const order = games.slice().sort((a, b) => compareGames(b, a));
   const ord = new Map(order.map((g, i) => [g.id, { i, label: g.date ? g.date.slice(5).replace('-', '/') + (g.number ? ` G${g.number}` : '') : g.id }]));
@@ -129,16 +130,19 @@ export function leaderboards(plays, games, side, team) {
   const lbl = (id) => (ord.get(id) || { label: id }).label;
   const span = (r) => (r.len ? (r.from.game === r.to.game ? lbl(r.from.game) : `${lbl(r.from.game)} → ${lbl(r.to.game)}`) : '');
   const hitting = side === 'hit';
-  const mine = plays.filter((p) => (hitting ? p.team : p.opp) === team && (hitting ? p.batter : p.pitcher))
+  const teamOf = (p) => (hitting ? p.team : p.opp);
+  const mine = plays.filter((p) => (team === null || teamOf(p) === team) && (hitting ? p.batter : p.pitcher))
     .map((p, i) => ({ p, i }))
     .sort((a, b) => o(a.p.game) - o(b.p.game) || a.i - b.i)
     .map((x) => x.p);
-  const who = (p) => (hitting ? p.batter : p.pitcher);
+  // Keyed by team and name, so two players of the same name in different teams stay apart.
+  const keyOf = (p) => `${teamOf(p)}\u0000${hitting ? p.batter : p.pitcher}`;
+  const person = (k) => { const [t, n] = k.split('\u0000'); return { who: n, team: t }; };
 
   const byP = new Map();
   const byPa = new Map();
   for (const p of mine) {
-    const k = who(p);
+    const k = keyOf(p);
     p.pitches.forEach((q) => {
       if (!byP.has(k)) byP.set(k, []);
       byP.get(k).push({ ...q, game: p.game, paKey: `${p.game}|${p.seq}` });
@@ -151,22 +155,22 @@ export function leaderboards(plays, games, side, team) {
 
   const streak = (events, good) => [...byP].map(([k, list]) => {
     const r = longestRun(list.filter(events), good);
-    return { who: k, value: r.len, active: r.active, detail: span(r) };
+    return { ...person(k), value: r.len, active: r.active, detail: span(r) };
   });
   const paStreak = (good) => [...byPa].map(([k, list]) => {
     const r = longestRun(list, good);
-    return { who: k, value: r.len, active: r.active, detail: span(r) };
+    return { ...person(k), value: r.len, active: r.active, detail: span(r) };
   });
-  const aggs = [...byP].map(([k, list]) => ({ who: k, ...agg(list) }));
+  const aggs = [...byP].map(([k, list]) => ({ ...person(k), ...agg(list) }));
   const rate = (num, den, min, label) => aggs.filter((a) => a[den] >= min)
-    .map((a) => ({ who: a.who, value: pct(a[num], a[den]), n: a[den], detail: `${a[num]} of ${a[den]} ${label}` }));
-  const count = (field) => aggs.map((a) => ({ who: a.who, value: a[field] }));
+    .map((a) => ({ who: a.who, team: a.team, value: pct(a[num], a[den]), n: a[den], detail: `${a[num]} of ${a[den]} ${label}` }));
+  const count = (field) => aggs.map((a) => ({ who: a.who, team: a.team, value: a[field] }));
   const threeBall = [...byP].map(([k, list]) => {
     const all = new Set(list.map((p) => p.paKey));
     const three = new Set(list.filter((p) => p.balls === 3 || (p.balls === 2 && ball(p))).map((p) => p.paKey));
-    return { who: k, value: three.size, n: all.size, detail: `of ${all.size} batters` };
+    return { ...person(k), value: three.size, n: all.size, detail: `of ${all.size} batters` };
   });
-  const hits = [...byPa].map(([k, list]) => ({ who: k, value: list.filter((p) => p.hit).length, detail: `in ${list.length} PA` }));
+  const hits = [...byPa].map(([k, list]) => ({ ...person(k), value: list.filter((p) => p.hit).length, detail: `in ${list.length} PA` }));
 
   const out = {};
   const add = (id, rows, low) => { out[id] = top(rows, low); };
@@ -178,7 +182,7 @@ export function leaderboards(plays, games, side, team) {
     add('h_chase_low', rate('chases', 'outZone', 10, 'pitches out of the zone chased'), true);
     add('h_walks', count('bb'));
     add('h_hits', hits);
-    add('h_ppa', aggs.filter((a) => a.pas >= 5).map((a) => ({ who: a.who, value: a.ppa, n: a.pas, detail: `${a.pitches} pitches, ${a.pas} PA` })));
+    add('h_ppa', aggs.filter((a) => a.pas >= 5).map((a) => ({ who: a.who, team: a.team, value: a.ppa, n: a.pas, detail: `${a.pitches} pitches, ${a.pas} PA` })));
     add('h_freeze_low', rate('freezes', 'twok', 10, 'two-strike pitches in the zone'), true);
     add('h_whiff_streak', streak(swing, whiff));
     add('h_chase_streak', streak(outZone, swing));
@@ -206,9 +210,9 @@ export function leaderboards(plays, games, side, team) {
     add('p_fpb_streak', streak((p) => p.inPa === 1, ball));
     add('p_reached_streak', paStreak(reached));
     add('p_walks', count('bb'));
-    add('p_bb_rate', aggs.filter((a) => a.pas >= 5).map((a) => ({ who: a.who, value: a.bbPct, n: a.pas, detail: `${a.bb} of ${a.pas} batters` })));
+    add('p_bb_rate', aggs.filter((a) => a.pas >= 5).map((a) => ({ who: a.who, team: a.team, value: a.bbPct, n: a.pas, detail: `${a.bb} of ${a.pas} batters` })));
     add('p_three_ball', threeBall);
-    add('p_ball_rate', aggs.filter((a) => a.pitches >= 30).map((a) => ({ who: a.who, value: pct(a.pitches - a.strikes, a.pitches), n: a.pitches, detail: `${a.pitches - a.strikes} of ${a.pitches} pitches` })));
+    add('p_ball_rate', aggs.filter((a) => a.pitches >= 30).map((a) => ({ who: a.who, team: a.team, value: pct(a.pitches - a.strikes, a.pitches), n: a.pitches, detail: `${a.pitches - a.strikes} of ${a.pitches} pitches` })));
   }
   return out;
 }

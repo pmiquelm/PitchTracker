@@ -271,6 +271,7 @@ details.model summary { cursor: pointer; font-weight: 600; }
 .lb-t .rank { width: 20px; color: var(--muted); }
 .lb-t tr.first .val, .lb-t tr.first .rank { font-weight: 700; color: var(--text); }
 .lb-t small { display: block; color: var(--muted); font-size: .74rem; }
+.lb-t small.lb-team { font-weight: 600; }
 .lb-t .val { white-space: nowrap; font-weight: 600; }
 .active { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .68rem; font-weight: 600; color: #fff; background: var(--accent); vertical-align: 1px; }
 

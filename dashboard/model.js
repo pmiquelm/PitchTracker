@@ -457,11 +457,14 @@ export function countGrid(pitches) {
   return cells;
 }
 
-// Every pitcher and batter pair.
-export function matchups(plays) {
-  const by = groupBy(plays.filter((p) => p.pitcher && p.batter), (p) => `${p.pitcher}\u0000${p.batter}`);
-  return [...by.values()].map((list) => ({ pitcher: list[0].pitcher, batter: list[0].batter, line: line(list) }))
-    .sort((a, b) => a.pitcher.localeCompare(b.pitcher) || b.line.batters - a.line.batters || a.batter.localeCompare(b.batter));
+// What one side did against each player on the other: role 'batter' groups the plays by batter
+// (with the batting team), 'pitcher' by pitcher (with the fielding team). Most batters faced first.
+export function versus(plays, role) {
+  const nameOf = (p) => (role === 'batter' ? p.batter : p.pitcher);
+  const teamOf = (p) => (role === 'batter' ? p.team : p.opp);
+  const by = groupBy(plays.filter((p) => nameOf(p)), (p) => `${teamOf(p)}\u0000${nameOf(p)}`);
+  return [...by].map(([key, list]) => ({ key, name: nameOf(list[0]), team: teamOf(list[0]), line: line(list) }))
+    .sort((a, b) => b.line.batters - a.line.batters || b.line.pa - a.line.pa || a.name.localeCompare(b.name));
 }
 
 export function outcomeCounts(plays) {
@@ -487,6 +490,13 @@ export function players(plays, role) {
   const groups = groupBy(plays.filter((p) => nameOf(p)), (p) => `${teamOf(p)}\u0000${nameOf(p)}`);
   return [...groups].map(([key, list]) => ({ key, team: teamOf(list[0]), name: nameOf(list[0]), plays: list, line: line(list) }))
     .sort((a, b) => a.team.localeCompare(b.team) || b.line.pa - a.line.pa || a.name.localeCompare(b.name));
+}
+
+// Whether a player's v is better (1) or worse (-1) than the team's t on metric m: high is good
+// unless m.lowGood; m.neutral (how often a hitter swings) is neither way. Equal is neither.
+export function better(m, v, t) {
+  if (m.neutral || v === null || v === undefined || t === null || t === undefined || v === t) return 0;
+  return (v > t) === !m.lowGood ? 1 : -1;
 }
 
 export function filterSession(plays, session) {

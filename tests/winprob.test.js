@@ -103,4 +103,10 @@ test('leaderboards from plays: streaks across games in date order, rates with a 
   const p = leaderboards(plays, games, 'pit', 'Them');
   assert.deepEqual(p.p_strike_streak.map((r) => [r.who, r.value]), [['P', 5]]);
   assert.deepEqual(leaderboards(plays, games, 'pit', 'Us').p_k, [], 'Us did not pitch');
+  // All teams: everybody ranked, each row saying whose team; same name in two teams stays apart.
+  const more = [...plays, { ...play('2026-04-02 G', 2, 'Bob', 'K', [pitch('TAKE', 'IN', 'called_strike', { strikes: 2, paEnd: 'strikeout' })]), team: 'Them', opp: 'Us', pitcher: 'Q' }];
+  const all = leaderboards(more, games, 'hit', null);
+  assert.deepEqual(all.h_k.map((r) => [r.who, r.team, r.value]), [['Bob', 'Them', 1], ['Bob', 'Us', 1]]);
+  assert.deepEqual(leaderboards(more, games, 'pit', null).p_k.map((r) => [r.who, r.team]), [['P', 'Them'], ['Q', 'Us']]);
+  assert.equal(b.h_k[0].team, 'Us');
 });
