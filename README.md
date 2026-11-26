@@ -1,86 +1,134 @@
 # PitchTracker
 
-Record every pitch of a baseball game on an iPhone or iPad, even with no signal.
-The data goes into a Google Sheet that other people can open, filter and build dashboards from.
+Record every pitch of a baseball game on an iPhone or iPad, even with no signal. Every pitch goes into a Google
+Sheet, and a **team dashboard** shows the games, with their videos, and every hitter and pitcher to anyone you send
+its link.
 
 <img src="docs/screenshot-phone.png" width="260" alt="Tracker on a phone"> <img src="docs/screenshot-ipad.png" width="420" alt="Tracker on an iPad">
 
-## How it works
+> **In-depth guide:** [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) explains the whole system from first principles,
+> with links to the code. Its [section 13](docs/HOW-IT-WORKS.md#13-keys-tokens-and-sign-ins) covers every key and
+> sign-in: who can record, who can read, who can deploy.
 
-> **In-depth guide:** [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) explains the whole system from first principles, with links to every relevant line of code.
+## What's in it
+
+| Part | Who uses it | What it does |
+|---|---|---|
+| **The app** (`/PitchTracker/`) | Recorders, on a phone or iPad | Records pitches, outcomes and live BP; works offline; uploads to the sheet |
+| **The Google Sheet** | You | Holds every pitch (**Pitches**) and plate appearance (**PlateAppearances**), the **Rosters** you type in, a **Summary**, and, if you transcribe scoresheets, **PlayByPlay** with **video timestamps** |
+| **The team dashboard** (`/PitchTracker/dashboard/`) | The team, read-only | Games with their video, box scores and win probability; hitters and pitchers, alone or compared with the team; leaderboards |
+
+There is no server of our own: the app and the dashboard are plain files on GitHub Pages, and a small Google Apps
+Script attached to the sheet receives the pitches and answers the dashboard.
+
+## Recording a game
 
 - **Three pads per pitch:** Pitch (Fastball / Curveball), Zone (In / Out) and Batter (Take / Swing / Foul / In play).
-  The pitch is saved as soon as all three are chosen. Pads can be tapped in any order, and tapping a pad again unselects it.
-- **The count updates automatically.** A take in the zone is a called strike and a take out of the zone is a ball.
-  A swing is always a strike. A foul is a strike unless there are already two.
-- **Both teams.** Enter the away and home lineups (or leave the opponent blank: they become *Batter 1–9*) and each team's pitcher.
-  The away team bats in the top of each inning, the home team in the bottom; each keeps its own place in the order and its own pitch count.
-- **Ball in play → outcome pads.** After *In play* the pads turn into a decision tree of big buttons:
-  **Hit** (single / double / triple / home run), **Out** (ground / line / fly out, double play), **Fielder's choice**,
-  **Sac** (bunt / fly) or **Error** (on a grounder / liner / fly), then **where the ball went** (P, C, 1B … RF, or Skip).
-  **‹ Back** goes up a level. Each result is saved as a row in the **PlateAppearances** tab.
-- **Outs and half-innings are automatic.** Strikeouts, outs, sacs and fielder's choices add one out, a double play two.
-  At three outs the other team comes up. Use **Outs − / +** for anything else (caught stealing, pickoff, a runner thrown out on a hit)
-  and **Inning − / +** (one half-inning per tap) to correct.
-- **Next batter is automatic** on a walk, a strikeout or a ball in play. **Next batter ›** asks why:
-  *Hit by pitch*, *Intentional walk*, *Catcher's interference*, *Out by rule* (adds an out) or *Other / correction* (records nothing).
-- **Lineup / Subs:** rename a lineup spot (either team) to make a substitution, change either pitcher, or pick the current batter to fix a mistake.
-  A sub in the middle of a plate appearance keeps the count.
+  The pitch is saved as soon as all three are chosen. Pads can be tapped in any order; tapping one again unselects it.
+- **The count updates itself.** A take in the zone is a called strike, a take out of it a ball. A swing is always a
+  strike. A foul is a strike unless there are already two.
+- **Both teams.** Enter the away and home lineups (or leave the opponent blank: they become *Batter 1–9*) and each
+  team's pitcher. The away team bats in the top of each inning; each team keeps its own place in the order and its own
+  pitch count.
+- **Ball in play → outcome pads:** **Hit** (single / double / triple / home run), **Out** (ground / line / fly out,
+  double play), **Fielder's choice**, **Sac** (bunt / fly) or **Error** (on a grounder / liner / fly), then **where the
+  ball went** (P, C, 1B … RF, or Skip). **‹ Back** goes up a level. Each result is a row in **PlateAppearances**.
+- **Outs, half-innings and the next batter are automatic.** Use **Outs − / +** for anything else (caught stealing,
+  pickoff) and **Inning − / +** to correct. **Next batter ›** asks why: *Hit by pitch*, *Intentional walk*,
+  *Catcher's interference*, *Out by rule* or *Other / correction*.
+- **Lineup / Subs:** rename a lineup spot to make a substitution, change either pitcher, or pick the current batter to
+  fix a mistake. A sub in the middle of a plate appearance keeps the count.
 - **Undo** reverses the last action of any kind. An undone pitch or result stays in the sheet with `deleted = TRUE`.
+- **Rosters:** on **New game** the app downloads the sheet's Rosters tab (and keeps a copy for no signal). Tap players
+  into the batting order and pick the starting pitcher, so names are spelled exactly as in the sheet.
+- **Live BP** (**＋ Live BP** on the home screen): your own pitchers against your own hitters. No batting order, innings
+  or outs: after every at-bat, **Who's up?** offers the roster. **End AB**, **Batter** and **Pitcher** handle the rest.
+  Rows go to the same tabs with `session_type` = `bp`.
 
-## How your data is kept safe
+### How your data is kept safe
 
-1. Each pitch is written to the phone's storage *before* the screen updates (IndexedDB, strict durability).
-2. The app asks iOS to treat its storage as persistent, and it must run from the Home Screen (it warns you otherwise).
-3. Pitches upload as soon as there's signal. The app retries on reconnect, when you reopen it, and every 30 s.
-   Every pitch has a unique id and the sheet *updates* rows by id, so resending never creates duplicates.
+1. Each pitch is written to the phone's storage *before* the screen updates.
+2. The app asks iOS to keep its storage, and it must run from the Home Screen (it warns you otherwise).
+3. Pitches upload as soon as there's signal, and the app retries on reconnect, when reopened, and every 30 s. Every
+   pitch has a unique id and the sheet *updates* rows by id, so resending never creates duplicates.
 4. The badge at the top always shows the state: **✓ All synced** or **⚠ N not uploaded**.
 5. Nothing is deleted from the phone after it uploads.
-6. **☰ → Back up game (file)** saves a full backup through the share sheet (Files / iCloud Drive / AirDrop / email), with no signal needed.
-   **Import backup** on the home screen restores it and uploads anything the sheet is missing.
+6. **☰ → Back up game (file)** saves a full backup through the share sheet, with no signal needed. **Import backup**
+   on the home screen restores it and uploads anything the sheet is missing.
 
 ## Setup
 
 ### 1. Host the app (GitHub Pages, free)
 
-On GitHub: **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `(root)` → Save**.
-After a minute the app is live at `https://<your-user>.github.io/PitchTracker/`.
+On GitHub: **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `(root)` → Save**. After a
+minute the app is at `https://<your-user>.github.io/PitchTracker/` and the dashboard at `…/PitchTracker/dashboard/`.
 
 ### 2. Connect the Google Sheet
 
-1. Create a new Google Sheet, then go to **Extensions → Apps Script**.
-2. Delete the sample code and paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs). Save.
-3. Choose the **`setup`** function in the toolbar and click **Run**. Approve the permissions: it's your own script, so click
-   *Advanced → Go to project* if Google warns you.
-   This creates the **Pitches**, **PlateAppearances**, **Summary** and **Rosters** tabs. Open **Execution log** and copy the **TOKEN**.
-4. **Deploy → New deployment** → gear icon → **Web app**. Set *Execute as*: **Me**, *Who has access*: **Anyone**. Click **Deploy** and copy the **Web app URL** (it ends in `/exec`).
-5. Open the app's URL in **Safari** → **Settings**, paste the URL and token, **Save**, then **Test connection**.
+1. Create a Google Sheet, then **Extensions → Apps Script**.
+2. Delete the sample code, paste in everything from [`apps-script/Code.gs`](apps-script/Code.gs), and save.
+3. Choose **`setup`** in the toolbar and click **Run**. Approve the permissions (it's your own script: *Advanced → Go
+   to project* if Google warns you). This creates the tabs and the **upload token**: open **Execution log** and copy
+   the TOKEN.
+4. **Deploy → New deployment** → gear icon → **Web app**. *Execute as*: **Me**. *Who has access*: **Anyone**. Click
+   **Deploy** and copy the **Web app URL** (it ends in `/exec`).
+5. Open the app's address in **Safari** → **Settings**, paste the URL and the token, **Save**, then **Test connection**.
 
-"Anyone" means anyone with the URL can reach the script. Writes are refused without the token.
-Share the *sheet* with viewers as usual. They never need the URL or the token.
+"Anyone" means phones reach the script without signing in to Google. The script itself refuses to write without the
+token, and refuses to read without the dashboard's key.
 
-If you change `Code.gs` later, use **Deploy → Manage deployments → Edit → New version** so the URL stays the same. Or set up
-[automatic script updates](#automatic-script-updates-optional) once and skip this.
+To change the script later, **never** use *New deployment* (that makes a new address and disconnects every phone):
+use **Deploy → Manage deployments → Edit → Version: New version**, or let GitHub do it (step 7).
 
-#### Automatic script updates (optional)
+### 3. Install the app on the iPhone / iPad
 
-A GitHub Action ([`.github/workflows/deploy-apps-script.yml`](.github/workflows/deploy-apps-script.yml)) can deploy
-`Code.gs` for you every time it changes on `main`, as a new version of your **existing** deployment, so the URL and
-setup links stay the same. From then on the repo is the source of truth: edits made in the Apps Script editor get
-overwritten on the next deploy.
+1. **After** step 2, the app's home screen in Safari shows *Install on this phone*. Tap **Copy setup link**.
+2. **Share → Add to Home Screen**.
+3. Open the new icon. If it isn't connected, tap **Paste & connect** (and **Paste** in the bubble iOS shows).
 
-How the deploy works, what to change when you edit the script, and what to do when it fails: [section 16 of the guide](docs/HOW-IT-WORKS.md#16-editing-the-google-script-how-the-build-works).
+From then on, always open it from the icon. (An app added to the Home Screen starts with empty storage, so the
+connection is carried over through the clipboard.)
 
-One-time setup:
+**Android** (Chrome, Samsung Internet, Edge): connect in the browser, then tap **Install app** (or **⋮ → Install
+app**). The installed app shares the browser's storage, so it's already connected.
+
+### 4. Add other recorders
+
+In the app, **Settings → Share with other recorders → Share setup link** (text, WhatsApp, email), or in person **Show
+QR code** and let them scan it with the phone's **Camera** app (it disappears after 60 s). Their phone shows a **sheet
+code** like `K7Q-X2M` before connecting: check it matches yours in Settings. On iPhone they then do step 3.
+
+The setup link carries the upload token: anyone with it can add pitches to your sheet. Send it only to recorders.
+`recorded_by` in the sheet shows who recorded each pitch (**Settings → Your name**, or a device id).
+
+### 5. Share the team dashboard
+
+In the app, **Settings → Team dashboard → Share link** (or **QR code**, or **Open** to see it yourself). Anyone with the
+link can *see* everything in the dashboard; nobody can change anything, and no Google account is needed. The first
+time, the dashboard asks to confirm the sheet code.
+
+The link carries a separate, read-only **viewer key**, never the upload token. **Replace the link…** makes a new key:
+every old dashboard link stops working, and recorders aren't affected.
+
+### 6. Share the sheet itself (optional)
+
+For people who should see the raw data: Google Sheets **Share → Viewer**. Give **Editor** only to people you'd trust
+with the script, because an editor can open the script and its keys.
+
+### 7. Automatic script updates (optional)
+
+A GitHub Action ([`.github/workflows/deploy-apps-script.yml`](.github/workflows/deploy-apps-script.yml)) deploys
+`Code.gs` whenever it changes on `main`, as a new version of your **existing** deployment, so the address and every
+link stay the same. From then on the repository is the source of truth: edits made in the Apps Script editor are
+overwritten.
 
 1. Turn on **Google Apps Script API** at <https://script.google.com/home/usersettings>.
-2. On a computer with Node.js, run `npx @google/clasp@3.4.1 login` and allow access in the browser. This creates a
-   file called `.clasprc.json` in your home folder.
-3. Find two IDs in the Apps Script editor:
-   - **Script ID**: ⚙ **Project Settings** → *IDs*.
-   - **Deployment ID**: **Deploy → Manage deployments** → your web app (it's the middle of the `/exec` URL).
-4. On GitHub: **Settings → Environments → New environment**, name it `apps-script`. Under *Deployment branches and
-   tags* choose **Selected branches and tags** and add `main`. Then add three **environment secrets**:
+2. On a computer with Node.js, run `npx @google/clasp@3.4.1 login` and allow access. This creates `.clasprc.json` in
+   your home folder.
+3. Find two IDs in the Apps Script editor: the **Script ID** (⚙ **Project Settings** → *IDs*) and the **Deployment ID**
+   (**Deploy → Manage deployments**; the middle of the `/exec` address).
+4. On GitHub: **Settings → Environments → New environment** `apps-script`; under *Deployment branches and tags* choose
+   **Selected branches and tags** and add `main`. Add three **environment secrets**:
 
    | Secret | Value |
    |---|---|
@@ -88,137 +136,75 @@ One-time setup:
    | `APPS_SCRIPT_ID` | The script ID |
    | `APPS_SCRIPT_DEPLOYMENT_ID` | The deployment ID |
 
-5. **Actions → Deploy Apps Script → Run workflow** to deploy the current `Code.gs` once and check it works.
+5. **Actions → Deploy Apps Script → Run workflow** once to check it works.
 
-The repo is public, but none of this is visible: secret values never show in the repo or the logs, and only workflows
-running on `main` can read them (not other branches, not pull requests from forks). The script still refuses uploads
-without the token, which never goes in the repo. Treat `CLASPRC_JSON` like a password: it can edit all your Apps
-Script projects. To cut it off, remove clasp's access at <https://myaccount.google.com/permissions> and delete the
-secret.
+`CLASPRC_JSON` is a password to *all* your Apps Script projects: only workflows on `main` can read it, and you can cut
+it off at <https://myaccount.google.com/permissions>. How the deploy works and what to do when it fails:
+[guide section 17](docs/HOW-IT-WORKS.md#17-editing-the-google-script-how-the-build-works).
 
-The Action only replaces `Code.gs`, and stops without changing anything if your script project has other files. At
-the end it checks the live script reports the new `VERSION`. You don't need to run `setup` after a deploy: if the
-columns changed, the first upload (or **Test connection**) moves the existing rows into the new layout by itself,
-after keeping a copy of the old tab. If it starts failing with an authentication error, repeat step 2 and update
-`CLASPRC_JSON`.
+You never need to run `setup` again after a deploy: if the columns changed, the first upload moves the existing rows
+into the new layout, after keeping a copy of the old tab. Until a script the app needs is live, phones keep everything
+and show *the sheet script is out of date*.
 
-**Updating the script:** deploy the new `Code.gs` (automatically, see above, or paste it and use *Manage deployments →
-Edit → New version*). Nothing else to do: when the columns change, the first upload after the deploy keeps a copy of
-the old tab (*Pitches (before update …)*) and moves the existing rows into the new columns. Until the new script is
-live, the app keeps everything on the phone and shows *the sheet script is out of date*; nothing is lost.
+## In the sheet
 
-### 3. Install it on the iPhone / iPad
+- **Rosters:** 5 blocks side by side, one per team: the team name next to **Team**, then **#** and **Name**, up to 40
+  players. Copy a block to the right for a sixth team. A game keeps the roster it started with.
+- **Summary:** starter pivots for games (pitches by pitcher and type, batter action, zone, ball-in-play results,
+  results by batter and against each pitcher) and the same for live BP. Rebuilt on every layout change: build your own
+  tables in a tab of your own.
+- **Your own dashboards:** [Looker Studio](https://lookerstudio.google.com) → **Create → Data source → Google Sheets →
+  Pitches**, with a filter `deleted = false` and a control on `session_type`; add **PlateAppearances** for results.
 
-1. **After** connecting in step 2, the app's home screen in Safari shows *Install on this phone*. Tap **Copy setup link**.
-2. Tap **Share → Add to Home Screen**.
-3. Open the new icon. If it isn't already connected, tap **Paste & connect** (and **Paste** in the bubble iOS shows).
+### Video timestamps (optional)
 
-From then on, always open it from the Home Screen icon.
+If a game is on YouTube, every play in the **PlayByPlay** tab (transcribed from the scoresheets) can be linked to its
+moment in the video. In the sheet, on a computer: **PitchTracker → Video timestamps**. A window opens with the video
+and the game's plays **in at-bat order**: each plate appearance, then whatever happened during it (a steal during
+Bob's at-bat comes after Bob's at-bat), because you stamp when an at-bat starts.
 
-Why the copy step: on iPhone an app added to the Home Screen gets its own, empty storage, separate from Safari's, so
-the connection has to be carried over. The app also tries to carry it in the page address, but iOS doesn't always keep it;
-the clipboard always works.
+1. Pick the game and paste its YouTube link (kept in the **Videos** tab).
+2. Play or skip to where the next at-bat starts and press **Enter**: the highlighted play gets the current time and the
+   next one is highlighted.
+3. PlayByPlay's `video` column shows each time as a link, and the dashboard plays the video from there.
 
-**Android** (Chrome, Samsung Internet, Edge): connect the sheet in the browser first, then tap **Install app** on the
-app's home screen (or browser menu **⋮ → Install app / Add to Home screen**). On Android the installed app shares the
-browser's storage, so it's already connected; there is no copy-and-paste step. The phone's Back button returns from a
-game to the games list.
+Keys: **Space** play / pause, **← →** 5 s, **J L** 10 s, **, .** 1 s, **↑ ↓** pick a play, **Backspace** clear its time.
+If a video won't play in the window, keep it open on YouTube, right-click → *Copy video URL at current time*, and paste
+it into the box under the video.
 
-### 4. Add other people
+Times live in their own **VideoTimes** tab, so regenerating PlayByPlay never loses them. If a corrected game file
+moved the plays, a time whose play changed shows **⚠ check**: stamp it again. Don't clear PlayByPlay's `video` header
+cell (opening the window puts it back).
 
-- **Viewers** don't need the app. In Google Sheets, use **Share → Anyone with the link → Viewer** and send them the sheet link.
-- **Other recorders:** in the app, go to **Settings → Share setup link** and send that link (text, WhatsApp, email),
-  or, in person, tap **Show QR code** and let them scan it with their phone's **Camera** app (it disappears after 60 seconds).
-  Before connecting, their phone shows a **sheet code** (like `K7Q-X2M`); check it matches the one in your Settings.
-  On iPhone they open it in Safari, tap **Copy setup link**, **Add to Home Screen**, then **Paste & connect** in the new app. On Android they open it and tap **Install app**. Pitches go into the same sheet,
-  and the `recorded_by` column shows who recorded each one (from **Settings → Your name**, or a device id).
-  If the installed app ever opens without a connection, it shows a box to paste the setup link into.
-- The setup link and QR code contain the token, so only send it to people you want writing to the sheet. To shut everyone out, run `setup` again
-  after deleting the `TOKEN` script property (Project Settings → Script properties). That creates a new token; then share a new link.
+## The team dashboard
 
-### 5. Team rosters (optional)
+- **Games** (oldest first in the menu): the score, the YouTube video, and every play in at-bat order. Tap a play's ▶ to
+  jump the video there. **Follow the video** highlights the play on screen and keeps it in view. Below: the box score,
+  and for games with a scoresheet, **win probability** (the chance of winning after every play), the biggest plays,
+  who moved the game, team totals, and how the run model is worked out.
+- **Hitters / Pitchers:** the whole team or one player. Every rate (quality at-bats, whiff, chase, freeze; strike,
+  first-pitch, 1-1, putaway, quick-out, leadoff…) with a player's set beside the team's, game-by-game charts, a chart
+  comparing the team on any rate, a sortable table of everyone, pitch types, swing rate by count, batter vs pitcher,
+  and every plate appearance with a ▶ to watch it.
+- **Leaders:** the good and bad leaderboards for a team's hitters and pitchers, with streaks across games.
+- **Games / Live BP / Both** at the top filters every tab. Wide tables keep the names pinned and shrink them to
+  initials as you scroll sideways.
 
-The **Rosters** tab has 5 blocks side by side, one per team. In each block, type the team name next to **Team** and list
-the players below (**#** and **Name**), up to 40 per team. To add a sixth team, copy a whole block
-to the right. Sheets set up before rosters existed get the tab the first time the app asks for rosters.
+Games with a transcribed scoresheet show its plays (with the app's pitches matched to each plate appearance); other
+games and live BP show the app's own plate appearances. The data is read fresh on every visit.
 
-On **New game**, the app downloads the rosters (and keeps a copy for when there's no signal; **↻ Rosters** fetches them
-again). Choose a team's roster and tap players into the batting order, pick the starting pitcher, then **Use lineup**.
-Names are then spelled exactly as in the sheet, so the Summary counts each player in one place. Typing still works:
-a roster name fixes its spelling and fills the number, and a roster number fills the name. During the game,
-**Lineup / Subs** suggests the same roster's bench players.
+## Access at a glance
 
-A game keeps its own copy of the roster it started with, so editing the Rosters tab never changes games already recorded.
-Rosters need script version 4 or later. Uploading pitches works with older scripts too.
+| Who | Holds | Can | To cut off |
+|---|---|---|---|
+| **You** | The Google account that owns the sheet | Everything | — |
+| **Sheet editors** | Editor access to the sheet | Everything the owner can, including the script and its keys | Remove their access |
+| **Recorders** | The setup link (upload token) | Add pitches, download rosters, make dashboard links | New token: delete `TOKEN` in Script properties, run `setup`, share a new setup link |
+| **The team** | The dashboard link (viewer key) | Read what the dashboard shows | **Settings → Team dashboard → Replace the link…** |
+| **Sheet viewers** | View access to the sheet | Read the sheet | Remove their access |
+| **GitHub** | Write access to the repository, and the `apps-script` secrets | Change the app and dashboard; deploy the script | Remove collaborators; revoke clasp at myaccount.google.com/permissions |
 
-### 6. Live BP sessions
-
-**＋ Live BP** on the home screen tracks live batting practice: your own pitchers against your own hitters. Pick the
-team's roster, tap the pitcher (or type a name), then **Start live BP**. There's no batting order, no innings and no outs: after every
-at-bat the pads make way for **Who's up?**, a grid of the roster (the pitcher left out, each player's plate appearances so far)
-with **Same batter again** at the top and a box for anyone not on the roster. Pitches, the count and the ball-in-play
-outcomes work as in a game.
-
-- **End AB** ends an at-bat without a pitch result (hit by pitch, or *Other / correction*).
-- **Batter** changes the batter in the middle of an at-bat (that at-bat is left unfinished).
-- **Pitcher** changes the pitcher; each one has their own pitch count.
-
-BP rows go to the same Pitches and PlateAppearances tabs with `session_type` = `bp`, the team's name as both
-`batting_team` and `pitching_team`, and `inning`, `half`, `outs_before` and `lineup_slot` left empty.
-Live BP needs script version 6 or later: until the new script is deployed, rows wait on the phone.
-
-### 7. Dashboard
-
-**Team dashboard (read-only link).** In the app, **Settings → Team dashboard → Share link** (or **QR code**) gives a
-link to `dashboard/` next to the app: every game with its YouTube video (tap a play to jump to it; *Follow the video*
-highlights the play on screen), a box score. **Hitters** and **Pitchers** show the whole team or one player: the same numbers as the
-claude.ai dashboard (quality at-bats, whiff, chase and freeze rates; strike, first-pitch, 1-1, putaway, quick-out and
-leadoff rates…) with each player's set beside the team's, game-by-game charts, a chart comparing the team on any of
-them, a sortable table of everyone, pitch types, swing rate by count, batter vs pitcher and every plate appearance
-(each one with video has a **Watch** button). Games with a scoresheet also get win probability: a
-chart of the chance of winning play by play, the biggest plays, who moved the game (win probability added for
-hitting, running, pitching and fielding), team totals, and how the run model is worked out. The **Leaders** tab has
-the good and bad leaderboards for a team's hitters and pitchers (streaks across games, rates with a minimum sample). Anyone with the link can *see* all the data but
-can't change anything, and doesn't need a Google account. The first time, it asks to confirm the sheet code. The link
-carries a separate read-only key, not the token: **Replace the link…** makes a new key, which stops every old
-dashboard link without affecting recorders. Needs script version 8 or later. Data is read fresh on every visit.
-Games with a transcribed scoresheet (PlayByPlay tab) show its plays, with the app's pitches matched to each plate
-appearance; other games and live BP show the app's plate appearances.
-
-- The **Summary** tab has starter pivots for games (live BP left out): pitches by pitcher and type, batter action by pitch type, zone by pitch type,
-  ball-in-play results by pitch type, results by batter and results against each pitcher. Below them, the same for
-  live BP: pitches by pitcher and type, batter action by pitch type, results by batter, and batter vs pitcher.
-- For your own dashboards, use [Looker Studio](https://lookerstudio.google.com): **Create → Data source → Google Sheets → Pitches tab**.
-  Add a filter `deleted = false`, and a filter control on `session_type` to show games, live BP or both.
-  Add the **PlateAppearances** tab as a second source for results.
-
-### 8. Video timestamps (optional)
-
-If a game is on YouTube, every play in the **PlayByPlay** tab (plate appearances and plays between pitches:
-steals, wild pitches, pickoffs…) can get a link to its moment in the video. In the sheet, on a computer:
-**PitchTracker → Video timestamps** (the menu appears a few seconds after the sheet opens). A window opens with the
-video on the left and the game's plays on the right, in at-bat order: each plate appearance, then the plays that
-happened during it (a steal during Bob's at-bat comes after Bob's at-bat), because a time marks when an at-bat starts.
-
-1. Pick the game and paste its YouTube link (kept in the **Videos** tab, so next time it's filled in).
-2. Play or skip to where the next play starts and press **Enter**. The highlighted play gets the video's current
-   time and the next one is highlighted.
-3. PlayByPlay's `video` column shows the time as a link (`41:12` opens YouTube at that moment).
-
-Keys: **Space** play / pause, **← →** 5 s, **J L** 10 s, **, .** 1 s, **↑ ↓** pick another play, **Backspace** clear
-its time. **Enter** on a play that has a time replaces it, and clicking one jumps the video there. If a video won't
-play in the window (some owners block it), keep it open on YouTube, right-click the video → *Copy video URL at
-current time*, and paste that into the box under the video: it fills the highlighted play the same way. A link to a
-different video (part 2 of a game) becomes the game's link.
-
-**Where the times live.** PlayByPlay is regenerated from the Scoresheets tab, so the times are kept in their own
-**VideoTimes** tab (game, event number, and the play's code and batter as a check). PlayByPlay's `video` column is
-a single formula in its header cell that looks each row up there, so regenerating the rows never loses a time.
-If a corrected game file moved the plays, a time whose play changed shows **⚠ check** in the sheet and ⚠ in the
-window: stamp it again. Don't clear PlayByPlay's `video` header cell. If it's lost, opening the window puts it back.
-
-The first time, Google asks you to approve the script again ("display content in the spreadsheet"). Do it as soon as
-the new script is deployed: until then Google may refuse uploads too (the phones keep everything and retry).
+Full detail, including what each request to the script needs: [guide section 13](docs/HOW-IT-WORKS.md#13-keys-tokens-and-sign-ins).
 
 ## Sheet columns
 
@@ -227,7 +213,7 @@ the new script is deployed: until then Google may refuse uploads too (the phones
 | column | meaning |
 |---|---|
 | `id` | unique pitch id |
-| `game_id` | entered at game setup |
+| `game_id` | entered at game setup; starts with the date (`2026-05-30 …`) |
 | `recorded_at` | when the pitch was entered |
 | `inning`, `half` | inning and `top` / `bottom` |
 | `batting_team`, `pitching_team` | team names from setup |
@@ -245,10 +231,10 @@ the new script is deployed: until then Google may refuse uploads too (the phones
 | `pa_result` | on the last pitch of a plate appearance: its result code (`K`, `BB`, `2B`, `GO`…) |
 | `deleted` | TRUE if undone in the app |
 | `recorded_by` | the recorder's name from Settings, or `device-xxxxxx` |
-| `session_type` | `game`, or `bp` for live BP (rows from before this column are `game`) |
+| `session_type` | `game`, or `bp` for live BP |
 | `synced_at` | when the sheet last received the row |
 
-**PlateAppearances** (one row per finished plate appearance), with the same `id` … `pitcher` situation columns plus:
+**PlateAppearances** (one row per finished plate appearance): the same situation columns, `id` to `pitcher`, plus:
 
 | column | meaning |
 |---|---|
@@ -262,27 +248,40 @@ the new script is deployed: until then Google may refuse uploads too (the phones
 | `outs_on_play` | outs the app counted for the play |
 | `deleted`, `recorded_by`, `session_type`, `synced_at` | as above |
 
+The other tabs: **Rosters** (typed in), **Summary** (built by the script), **PlayByPlay** and **Scoresheets** (from the
+scoresheet transcriptions, made outside the app), **VideoTimes** and **Videos** (the video timestamps), and copies named
+*… (before update …)* kept when a layout change moved rows.
+
 ## Development
 
 No build step and no dependencies: plain HTML, CSS and JavaScript modules.
 
 ```bash
-npm test                      # game-logic, sheet-script and setup-link unit tests (Node 18+)
-python3 -m http.server 8000   # then open http://localhost:8000
+npm test
 ```
 
 ```bash
-node tests/e2e.cjs /tmp/shots   # browser test; needs Playwright and the server above on port 8765
+python3 -m http.server 8765
 ```
+
+```bash
+node tests/e2e.cjs /tmp/shots
+```
+
+`npm test` runs the unit tests (Node 18+). The browser test drives the app in Playwright's Chromium against the
+server on port 8765.
 
 | file | role |
 |---|---|
-| `js/game.js` | count, outs, half-inning, outcome and lineup rules for both teams (pure, unit-tested) |
-| `js/db.js` | local storage (IndexedDB). The only file to swap for SQLite if wrapped as a native app with Capacitor |
-| `js/sync.js` | upload queue to the Google Sheet |
-| `js/backup.js` | export/import of backup files and CSV |
-| `js/connect.js` | setup links (`#connect=…`) |
-| `js/roster.js` | cleaning up and matching roster players |
-| `js/app.js` | screens and UI |
-| `sw.js` | offline caching. **Bump `VERSION` whenever any app file changes**, or installed copies keep the old files |
-| `apps-script/Code.gs` | the Google Sheets receiver |
+| `index.html`, `css/app.css`, `js/app.js` | the app's page, styles, screens and UI |
+| `js/game.js` | count, outs, half-inning, outcome and lineup rules (pure; also used by the dashboard) |
+| `js/db.js` | storage on the phone (IndexedDB) |
+| `js/sync.js` | uploads, rosters and the dashboard's viewer key |
+| `js/connect.js` | setup links, dashboard links and the sheet code (pure; also used by the dashboard) |
+| `js/backup.js`, `js/roster.js` | backups and CSV; roster matching |
+| `js/vendor/qrcodegen.js` | QR codes (vendored, pinned by checksum) |
+| `sw.js` | offline cache for the app. **Bump `VERSION` whenever an app file changes** |
+| `dashboard/` | the team dashboard: `dash.js` (page), `model.js` (plays and stats), `winprob.js` (run and win model), `leaders.js` (leaderboards) |
+| `apps-script/Code.gs` | the script in the sheet: uploads, rosters, the dashboard's data, video timestamps. **Bump `VERSION` on every change** |
+
+Rules for changing the code are in [`CLAUDE.md`](CLAUDE.md) and [guide section 16](docs/HOW-IT-WORKS.md#16-testing-changing-and-releasing).
