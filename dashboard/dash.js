@@ -295,6 +295,82 @@ function render() {
 
 function redraw() {
   for (const fn of drawQueue) fn();
+  document.querySelectorAll('.scroll > table.stats').forEach(freezeNames);
+}
+
+// ---------- wide tables: names that shrink as you scroll ----------
+// The first column of a table that scrolls sideways stays put. At rest it shows full names; as
+// the table scrolls, the full name is clipped away (and fades) to reveal a short form, freeing the
+// room for the numbers: initials ("Liz Rodriguez Fraddy" → "LRF", two letters a word where
+// initials clash), or a cell's own data-short (the play's code). Same as the claude.ai dashboard.
+
+function initials(text, n) {
+  return String(text).split(/[\s\-]+/).filter(Boolean)
+    .map((w) => { const l = w.replace(/[^\p{L}\p{N}]/gu, ''); return l ? l.slice(0, n).charAt(0).toUpperCase() + l.slice(1, n) : ''; }).join('');
+}
+
+function shortNames(texts) {
+  const out = new Map();
+  for (const t of new Set(texts)) out.set(t, t.length <= 6 ? t : initials(t, 1));
+  for (let n = 2; n <= 3; n++) {
+    const seen = new Map();
+    for (const v of out.values()) seen.set(v, (seen.get(v) || 0) + 1);
+    for (const [t, v] of out) if (seen.get(v) > 1 && t.length > 6) out.set(t, initials(t, n));
+  }
+  return out;
+}
+
+let measureCtx = null;
+function freezeNames(table) {
+  if (table.dataset.frozen) return;
+  table.dataset.frozen = '1';
+  const rows = [...table.querySelectorAll('tbody tr, tfoot tr')].filter((tr) => tr.cells.length > 1);
+  const firsts = rows.map((tr) => tr.cells[0]).filter((c) => c.tagName === 'TH' && c.textContent.trim());
+  if (!firsts.length) return;
+  const label = (cell) => cell.querySelector('button.link') || cell;
+  const shorts = shortNames(firsts.filter((c) => !c.dataset.short).map((c) => label(c).textContent.trim()));
+  const shortOf = (c) => c.dataset.short || shorts.get(label(c).textContent.trim());
+  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+  const cs = getComputedStyle(firsts[0]);
+  measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const w = (t) => measureCtx.measureText(String(t)).width;
+  const head = table.querySelector('thead th');
+  const cap = Math.min(window.innerWidth * 0.52, 26 * parseFloat(cs.fontSize || '14'));
+  const full = Math.max(...firsts.map((c) => w(label(c).textContent.trim()) + (c.classList.contains('wrap') ? 0 : 0)));
+  const short = Math.max(head ? w(head.textContent.trim()) : 0, ...firsts.map((c) => w(shortOf(c))));
+  const gap = Math.max(0, Math.ceil(Math.min(full + 20, cap) - (short + 20)));
+  if (gap < 12) return; // names are short already: nothing to gain
+  table.classList.add('frozen');
+  table.style.setProperty('--gap-px', `${gap}px`);
+  table.style.setProperty('--full-w', `${Math.ceil(Math.min(full + 21, cap))}px`);
+  // A spacer column after the names holds the room the full names spill into.
+  for (const tr of table.querySelectorAll('tr')) {
+    const first = tr.cells[0];
+    if (!first) continue;
+    const gapCell = document.createElement(tr.parentElement.tagName === 'THEAD' ? 'th' : 'td');
+    gapCell.className = 'gap';
+    gapCell.setAttribute('aria-hidden', 'true');
+    first.after(gapCell);
+  }
+  for (const c of firsts) {
+    const box = label(c);
+    const text = box.textContent.trim();
+    const sh = h('span', { class: 'c-short', 'aria-hidden': 'true', text: shortOf(c) });
+    const fl = h('span', { class: 'c-full', text });
+    box.replaceChildren(sh, fl);
+    c.classList.add('cc');
+  }
+  const scroller = table.parentElement;
+  let frame = 0;
+  const set = () => {
+    frame = 0;
+    const x = scroller.scrollLeft;
+    scroller.classList.toggle('scrolled', x > 1);
+    table.style.setProperty('--s', `${Math.min(x, gap)}px`);
+    table.style.setProperty('--o', String(Math.max(0, Math.min(1, (gap - x) / Math.max(6, gap * 0.1)))));
+  };
+  scroller.addEventListener('scroll', () => { if (!frame) frame = requestAnimationFrame(set); }, { passive: true });
+  set();
 }
 
 // The header's height, for whatever sticks under it (the video, the list of plays).
@@ -480,7 +556,7 @@ function bigPlays(game) {
     h('div', { class: 'scroll' }, h('table', { class: 'stats' },
       h('thead', {}, h('tr', {}, ...['Play', 'Inning', 'Batter', 'Score before', 'Pitches', 'Leverage', 'WPA', 'Error by'].map((t) => h('th', { text: t })))),
       h('tbody', {}, ...rows.map((p) => h('tr', {},
-        h('th', { class: 'wrap' }, p.video !== null ? h('button', { class: 'link', title: 'Play it in the video', onclick: () => seek(p.video, true), text: `▶ ${p.desc}` }) : p.desc),
+        h('th', { class: 'wrap', 'data-short': p.code }, p.video !== null ? h('button', { class: 'link', title: 'Play it in the video', onclick: () => seek(p.video, true), text: `▶ ${p.desc}` }) : p.desc),
         h('td', { text: halfName(p) }), h('td', { class: 'left', text: p.batter }),
         h('td', { text: p.awayBefore !== null ? `${p.awayBefore}–${p.homeBefore}` : '' }),
         h('td', {}, pitchTiles(p.pitches)), h('td', { text: (p.wp.li ?? 0).toFixed(1) }), wpaCell(p.wp.wpa),
