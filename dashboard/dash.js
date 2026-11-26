@@ -1323,6 +1323,14 @@ function versusTable(role, plays, person, team) {
     }));
 }
 
+// What the play's description adds to its result: "Triple; Leidinger M scores" under "Triple" is
+// "Leidinger M scores"; nothing when it only repeats the result.
+function paNote(p) {
+  const label = OUTCOME_LABELS[p.outcome];
+  if (!p.isPa || !p.desc || p.desc === label) return '';
+  return label && p.desc.startsWith(`${label}; `) ? p.desc.slice(label.length + 2) : p.desc;
+}
+
 function paList(plays, role) {
   const batter = role === 'batter';
   const pas = plays.filter((p) => p.isPa || p.pitches.length);
@@ -1335,12 +1343,13 @@ function paList(plays, role) {
     h('div', { class: 'pa-list' }, ...games.map((g) => h('div', { class: 'pa-game' },
       h('div', { class: 'half' }, h('span', { text: `${fmtDate(g.date)} · ${g.title}` }), g.score ? h('span', { class: 'muted', text: `${g.score.away}–${g.score.home}` }) : null),
       ...byGameMap.get(g.id).map((p) => h('div', { class: 'pa' },
-        h('span', { class: 'pa-inn muted small', text: halfName(p) }),
-        h('span', { class: 'who' },
-          h('strong', { text: p.isPa ? (OUTCOME_LABELS[p.outcome] || p.desc) : 'Not finished' }),
-          h('span', { class: 'desc', text: batter ? (p.pitcher ? `vs ${p.pitcher}` : '') : p.batter }),
-          p.isPa && p.desc && p.desc !== OUTCOME_LABELS[p.outcome] ? h('span', { class: 'muted small', text: p.desc }) : null),
-        pitchTiles(p.pitches),
+        h('span', { class: 'pa-inn muted small', text: halfName(p).replace('Bottom', 'Bot') }),
+        h('span', { class: 'pa-main' },
+          h('span', { class: 'pa-top' },
+            h('strong', { text: p.isPa ? (OUTCOME_LABELS[p.outcome] || p.desc) : 'Not finished' }),
+            pitchTiles(p.pitches)),
+          h('span', { class: 'pa-line', text: batter ? (p.pitcher ? `vs ${p.pitcher}` : '') : p.batter }),
+          paNote(p) ? h('span', { class: 'pa-line muted', text: paNote(p) }) : null),
         p.video !== null ? h('button', { class: 'watch', title: 'Watch it in the game video', 'aria-label': 'Watch it in the game video', onclick: () => watch(p), text: '▶' }) : h('span', { class: 'watch-none' })))))));
 }
 
