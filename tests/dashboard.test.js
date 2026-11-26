@@ -1,7 +1,7 @@
 // The team dashboard's numbers (dashboard/model.js), from data shaped like the script sends it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, matchups, atBatOrder } from '../dashboard/model.js';
+import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, versus, better, atBatOrder } from '../dashboard/model.js';
 
 const tab = (cols, rows) => ({ cols, rows: rows.map((r) => cols.map((c) => r[c] ?? '')) });
 const PBP_COLS = ['game_id', 'date', 'event_seq', 'inning', 'half', 'batting_team', 'fielding_team', 'batter', 'pitcher',
@@ -163,8 +163,13 @@ test('game by game in date order, the count grid and matchups', () => {
   assert.equal(grid.length, 12);
   const first = grid.find((c) => c.balls === 0 && c.strikes === 0);
   assert.deepEqual([first.pitches, first.swingPct], [4, 0.5], "a ball in play and a foul at 0-0");
-  const mu = matchups(filterSession(m.plays, 'game'));
-  assert.deepEqual(mu.map((r) => [r.pitcher, r.batter, r.line.pa]).slice(0, 2), [['Ace', 'Leidinger Max', 1], ['Ace', 'Tournoux Syan', 1]]);
+  const game = filterSession(m.plays, 'game');
+  // Ace's batters, one row each, those with pitches recorded first; the team's pitchers against them.
+  const vb = versus(game.filter((p) => p.pitcher === 'Ace'), 'batter');
+  assert.deepEqual(vb.map((r) => [r.name, r.team, r.line.pa]), [['Leidinger Max', 'Skylarks', 1], ['Tournoux Syan', 'Skylarks', 1], ['Mannel Julius', 'Skylarks', 1]]);
+  // A hitter against each pitcher: the Flamingos' batters only saw Our P.
+  const vp = versus(game.filter((p) => p.team === 'Flamingos'), 'pitcher');
+  assert.deepEqual(vp.map((r) => [r.name, r.team, r.line.pa]), [['Our P', 'Skylarks', 2]]);
   assert.equal(m.plays.find((p) => p.seq === 1 && p.half === 'top').leadoff, true);
   assert.equal(m.plays.find((p) => p.seq === 5).leadoff, true, 'first of the bottom half');
 });
@@ -173,4 +178,15 @@ test('at-bat order: each plate appearance, then the plays during it; a third-out
   const p = (seq, code, isPa, half = 'top') => ({ seq, code, isPa, inning: 1, half });
   const list = [p(1, '1B', true), p(2, 'SB', false), p(3, 'WP', false), p(4, 'FO', true), p(5, 'PK', false), p(6, 'K', true, 'bottom')];
   assert.deepEqual(atBatOrder(list).map((x) => x.code), ['1B', 'FO', 'SB', 'WP', 'PK', 'K']);
+});
+
+test('better: high is good unless lowGood, neutral and ties are neither', () => {
+  assert.equal(better({}, 0.4, 0.3), 1);
+  assert.equal(better({}, 0.2, 0.3), -1);
+  assert.equal(better({ lowGood: true }, 0.2, 0.3), 1, "a hitter's whiff rate under the team's is good");
+  assert.equal(better({ lowGood: true }, 0.4, 0.3), -1);
+  assert.equal(better({ lowGood: true }, 0.3, 0.3), 0, 'equal is neither');
+  assert.equal(better({}, 0.3, 0.3), 0);
+  assert.equal(better({ neutral: true }, 0.9, 0.1), 0);
+  assert.equal(better({}, null, 0.1), 0);
 });

@@ -176,10 +176,27 @@ button.play:hover { background: var(--accent-soft); }
 .watch-none { width: 0; }
 @media (max-width: 560px) {
   .play { grid-template-columns: 18px minmax(0, 1fr); }
-  .pa { grid-template-columns: 52px minmax(0, 1fr); }
-  .play .tiles, .pa .tiles { grid-column: 2; }
-  .pa .watch, .pa .watch-none { grid-column: 2; justify-self: start; }
+  .play .tiles { grid-column: 2; }
+  /* The ▶ stays on the first line, at the right; the pitches go under the play. */
+  .pa { grid-template-columns: 52px minmax(0, 1fr) auto; }
+  .pa .pa-inn { grid-row: 1; grid-column: 1; }
+  .pa .who { grid-row: 1; grid-column: 2; }
+  .pa .watch, .pa .watch-none { grid-row: 1; grid-column: 3; align-self: start; }
+  .pa .tiles { grid-row: 2; grid-column: 2 / 4; }
 }
+
+/* a play's video in a pop-up */
+dialog.clip {
+  width: min(720px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+}
+dialog.clip::backdrop { background: rgb(0 0 0 / .6); }
+.clip-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.clip .tiles { justify-content: flex-start; margin-top: 8px; }
+.clip .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.clip #clip-player { position: absolute; inset: 0; width: 100%; height: 100%; }
+.clip iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
 /* pitch tiles */
 .tiles { display: flex; flex-wrap: wrap; gap: 2px; justify-content: flex-end; }
@@ -271,6 +288,7 @@ details.model summary { cursor: pointer; font-weight: 600; }
 .lb-t .rank { width: 20px; color: var(--muted); }
 .lb-t tr.first .val, .lb-t tr.first .rank { font-weight: 700; color: var(--text); }
 .lb-t small { display: block; color: var(--muted); font-size: .74rem; }
+.lb-t small.lb-team { font-weight: 600; }
 .lb-t .val { white-space: nowrap; font-weight: 600; }
 .active { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .68rem; font-weight: 600; color: #fff; background: var(--accent); vertical-align: 1px; }
 

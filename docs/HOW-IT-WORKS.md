@@ -912,11 +912,15 @@ claude.ai dashboard's definitions:
 | Freezes | a called third strike; freeze rate = freezes over 2-strike pitches in the zone |
 | Plate appearances | **quality at-bat**: a hit, walk, hit by pitch, sacrifice or catcher's interference, 6 pitches or more, or two 2-strike fouls; **1-1 strikes**; **putaways** (strikeouts of batters who reached two strikes); **quick outs** (retired in 3 pitches or fewer); **leadoff batters retired**; **3-ball counts**. These count only plate appearances with pitches recorded |
 
-**Hitters** and **Pitchers** show the whole team or one player. A player's numbers carry the team's beside them. Below
+**Hitters** and **Pitchers** show the whole team or one player. A player's numbers carry the team's beside them, green
+where the player is better and red where worse, by which way is good for that player
+([`better`](../dashboard/model.js): a hitter wants low whiff, chase, 2-strike whiff, freeze and strikeout rates; how
+often a hitter swings is neither). Below
 are game-by-game charts ([`byGame`](../dashboard/model.js); a player's chart draws the team's line in grey behind), a
 chart comparing the team on any number (with fastball and curveball dots where they apply), a sortable table of
 everyone with a team total, pitch types, swing rate and pitch mix by count ([`countGrid`](../dashboard/model.js)),
-batter vs pitcher ([`matchups`](../dashboard/model.js)) and every plate appearance. "The team" defaults to the team in
+every number against each opponent ([`versus`](../dashboard/model.js): a pitcher, or the team's pitchers together,
+against each batter faced; a hitter, or the team's hitters together, against each pitcher) and every plate appearance. "The team" defaults to the team in
 the most games, which is yours: opponents change from game to game. Unit tests:
 [`tests/dashboard.test.js`](../tests/dashboard.test.js).
 
@@ -945,19 +949,24 @@ model's tables under *How the win probability is worked out*. Unit tests: [`test
 ### 9.7 Leaderboards
 
 [`leaders.js`](../dashboard/leaders.js) has the claude.ai dashboard's boards, titles and minimum samples, good and bad,
-for a team's hitters and pitchers. Streaks run across games in date order and are *active* when the latest chance kept
+for a team's hitters and pitchers, or everybody in every team (each name then says its team). Streaks run across games in date order and are *active* when the latest chance kept
 them going; ties share a rank. Names are the scoresheet's where a game has one (the claude.ai dashboard uses the app's).
 
 ### 9.8 The video
 
 The page embeds YouTube's IFrame player from `youtube-nocookie.com`. Tapping a play's ▶ seeks to its time; **▶** on a
-hitter's or pitcher's plate appearance opens that game at that moment.
+hitter's or pitcher's plate appearance plays it in a pop-up over the page, which stays where it was. The pop-up closes
+with ✕, Close, Esc, a tap outside it or Back; **Open the game** goes to the Games tab at that moment instead.
 
 **Follow the video** checks the player's time every 0.7 s and marks the last play whose time has passed. On a wide
 screen it scrolls the list of plays beside the video; on a phone, where the whole page scrolls under the header and the
 video, it scrolls the page so the play sits just below the video.
 
 If YouTube can't load, or the video's owner doesn't allow embedding, the page says so with a link to the video.
+
+**Going back.** Opening a tab, game, team or player is a step in the browser's history (`go` in
+[`dash.js`](../dashboard/dash.js)), with where the page was scrolled to. The back gesture or button returns to the
+place before instead of leaving the dashboard; nothing is added to the address. An open video pop-up is a step too.
 
 ### 9.9 The page
 
@@ -1347,10 +1356,10 @@ From [`CLAUDE.md`](../CLAUDE.md):
 | [`js/connect.js`](../js/connect.js) | 134 | Setup and dashboard links, validation, sheet code (8, 9.2); also used by the dashboard |
 | [`js/vendor/qrcodegen.js`](../js/vendor/qrcodegen.js) | 846 | QR code library, vendored and pinned (8.7) |
 | [`dashboard/index.html`](../dashboard/index.html) | 23 | The dashboard's page shell and security policy (9.9) |
-| [`dashboard/dash.js`](../dashboard/dash.js) | 1,210 | The dashboard page: links, reading, every tab, charts, video (9) |
-| [`dashboard/model.js`](../dashboard/model.js) | 494 | Plays, games and every number (9.4, 9.5) |
+| [`dashboard/dash.js`](../dashboard/dash.js) | 1,347 | The dashboard page: links, reading, every tab, charts, video (9) |
+| [`dashboard/model.js`](../dashboard/model.js) | 504 | Plays, games and every number (9.4, 9.5) |
 | [`dashboard/winprob.js`](../dashboard/winprob.js) | 415 | Run expectancy and win probability (9.6) |
-| [`dashboard/leaders.js`](../dashboard/leaders.js) | 214 | Leaderboards (9.7) |
+| [`dashboard/leaders.js`](../dashboard/leaders.js) | 218 | Leaderboards (9.7) |
 | [`dashboard/dash.css`](../dashboard/dash.css) | 336 | The dashboard's styling |
 | [`apps-script/Code.gs`](../apps-script/Code.gs) | 1,005 | The Google side: uploads, rosters, keys, the dashboard's data, video timestamps (7, 17) |
 | [`.github/workflows/deploy-apps-script.yml`](../.github/workflows/deploy-apps-script.yml) | 99 | Deploys `Code.gs` to Google on every change on `main` (17.4) |

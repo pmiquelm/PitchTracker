@@ -8,7 +8,7 @@
 import { decodeViewerLink, isSetupLinkHash, isValidScriptUrl, isViewerLinkHash, sheetCode } from '../js/connect.js';
 import { PITCH_TYPES } from '../js/game.js';
 import {
-  buildModel, outcomeCounts, arsenal, players, filterSession, line, byGame, countGrid, matchups, OUTCOME_LABELS, NO_TEAM,
+  buildModel, outcomeCounts, arsenal, players, filterSession, line, byGame, countGrid, versus, better, OUTCOME_LABELS, NO_TEAM,
 } from './model.js';
 import { gamePlayers, gameTeams, OUTCOMES, RUNNING } from './winprob.js';
 import { BOARDS, leaderboards } from './leaders.js';
@@ -26,7 +26,7 @@ let loadedAt = 0;
 let loading = false;
 const ui = {
   tab: 'games', session: 'game', game: null, hitter: null, pitcher: null, hitTeam: null, pitTeam: null, lbTeam: null, follow: true,
-  hitCmp: 'qab', pitCmp: 'strike', hitSort: null, pitSort: null,
+  hitCmp: 'qab', pitCmp: 'strike', hitSort: null, pitSort: null, hitVsSort: null, pitVsSort: null,
   ...readPrefs(),
 };
 // Charts are drawn once the page is on screen (they need its width), and again when the width changes.
@@ -232,6 +232,7 @@ async function load() {
     model = buildModel(data);
     loadedAt = Date.now();
     render();
+    if (!history.state || !history.state.pt) remember({ pt: place(), y: 0 }, false);
   } catch (err) {
     if (err.code === 'bad_key') {
       writeJson(STORE, null);
@@ -261,19 +262,58 @@ function setStatus(text, err = false) {
   if (el) { el.textContent = text; el.classList.toggle('err', err); }
 }
 
+// ---------- going back ----------
+// Each move to another place (a tab, game, team or player) is a step in the browser's history, so
+// the back gesture or button returns to the place before (and where it was scrolled to) instead of
+// leaving the dashboard. Nothing goes in the address: the state lives in the history entries.
+
+const PLACE = ['tab', 'game', 'hitter', 'pitcher', 'hitTeam', 'pitTeam', 'lbTeam'];
+const place = () => Object.fromEntries(PLACE.map((k) => [k, ui[k] ?? null]));
+const samePlace = (a, b) => !!a && !!b && PLACE.every((k) => (a[k] ?? null) === (b[k] ?? null));
+
+function remember(entry, push) {
+  try { history[push ? 'pushState' : 'replaceState'](entry, ''); } catch { /* some embeds refuse: no history then */ }
+}
+
+function go(change, toTop = true) {
+  const before = place();
+  remember({ pt: before, y: window.scrollY }, false);
+  Object.assign(ui, change);
+  savePrefs();
+  render(); // may settle the choice (a team with no such player shows the whole team)
+  const now = place();
+  if (!samePlace(before, now)) remember({ pt: now, y: 0 }, true);
+  if (toTop) window.scrollTo(0, 0);
+}
+
+// The page restores its own scroll (each step keeps it), so the browser mustn't as well.
+try { history.scrollRestoration = 'manual'; } catch { /* old browsers */ }
+
+window.addEventListener('popstate', (e) => {
+  const st = e.state && e.state.pt;
+  // Back with a play's video open closes it and stays on the page under it.
+  if (clip) { closeClip(true); if (samePlace(st, place())) return; }
+  if (!st || !model) return;
+  Object.assign(ui, st);
+  savePrefs();
+  render();
+  const y = e.state.y || 0;
+  requestAnimationFrame(() => window.scrollTo(0, y));
+});
+
 // ---------- layout ----------
 
 function render() {
   destroyPlayer();
   drawQueue = [];
   const tabs = [['games', 'Games'], ['hitters', 'Hitters'], ['pitchers', 'Pitchers'], ['leaders', 'Leaders']];
-  const session = h('select', { 'aria-label': 'Sessions: games, live BP or both', onchange: (e) => { ui.session = e.target.value; ui.game = null; savePrefs(); render(); } },
+  const session = h('select', { 'aria-label': 'Sessions: games, live BP or both', onchange: (e) => { ui.session = e.target.value; ui.game = null; savePrefs(); render(); remember({ pt: place(), y: window.scrollY }, false); } },
     ...[['game', 'Games'], ['bp', 'Live BP'], ['all', 'Both']].map(([v, t]) => h('option', { value: v, selected: ui.session === v, text: t })));
   const header = h('header', { class: 'bar' },
     h('div', { class: 'brand' }, h('img', { src: '../icons/icon.svg', alt: '', width: 28, height: 28 }), h('span', { text: 'PitchTracker' })),
     h('nav', { class: 'tabs', role: 'tablist' }, ...tabs.map(([id, label]) => h('button', {
       role: 'tab', 'aria-selected': String(ui.tab === id), class: ui.tab === id ? 'on' : '',
-      onclick: () => { ui.tab = id; savePrefs(); render(); window.scrollTo(0, 0); }, text: label,
+      onclick: () => go({ tab: id }), text: label,
     }))),
     h('div', { class: 'tools' }, session,
       h('button', { id: 'refresh', class: 'icon', title: 'Read the sheet again', 'aria-label': 'Refresh', onclick: () => load(), text: '↻' })));
@@ -407,7 +447,7 @@ function renderGames(main) {
   if (!games.some((g) => g.id === ui.game)) ui.game = (games.find((g) => g.video) || games[0]).id;
   const game = games.find((g) => g.id === ui.game);
 
-  const pick = h('select', { class: 'grow', 'aria-label': 'Game', onchange: (e) => { ui.game = e.target.value; render(); } },
+  const pick = h('select', { class: 'grow', 'aria-label': 'Game', onchange: (e) => go({ game: e.target.value }, false) },
     // Oldest first, in date order (doubleheaders by game number).
     ...games.slice().reverse().map((g) => h('option', { value: g.id, selected: g.id === ui.game, text: gameLabel(g) })));
   main.append(h('div', { class: 'controls' }, pick));
@@ -612,30 +652,33 @@ function modelDetails() {
 function renderLeaders(main, plays) {
   const teams = [...new Set(plays.flatMap((p) => [p.team, p.opp]))].filter((t) => t !== NO_TEAM);
   if (!plays.length || !teams.length) { main.append(empty('Nothing to rank in this selection yet.')); return; }
-  if (!teams.includes(ui.lbTeam)) ui.lbTeam = ourTeam(teams);
+  if (ui.lbTeam !== ALL && !teams.includes(ui.lbTeam)) ui.lbTeam = ourTeam(teams);
+  const all = ui.lbTeam === ALL;
   main.append(h('div', { class: 'controls' },
-    h('select', { 'aria-label': 'Team', onchange: (e) => { ui.lbTeam = e.target.value; savePrefs(); render(); } },
+    h('select', { 'aria-label': 'Team', onchange: (e) => go({ lbTeam: e.target.value }) },
+      h('option', { value: ALL, selected: all, text: 'All teams' }),
       ...teams.map((t) => h('option', { value: t, selected: t === ui.lbTeam, text: t })))),
   h('p', { class: 'muted small', text: "Top 5 on each board. Streaks carry over from one game to the next in date order (GAME 1 before GAME 2 on the same day); active means it's still going. Ties share a rank." }));
   for (const [side, title, role] of [['hit', 'Hitters', 'batter'], ['pit', 'Pitchers', 'pitcher']]) {
-    const boards = leaderboards(plays, model.games, side, ui.lbTeam);
-    main.append(h('h2', { class: 'lb-side', text: `${ui.lbTeam} ${title.toLowerCase()}` }));
+    const boards = leaderboards(plays, model.games, side, all ? null : ui.lbTeam);
+    main.append(h('h2', { class: 'lb-side', text: all ? `${title}: all teams` : `${ui.lbTeam} ${title.toLowerCase()}` }));
     for (const good of [true, false]) {
       main.append(h('h3', { class: `lb-h ${good ? 'good' : 'bad'}`, text: good ? 'The good' : 'The bad' }),
-        h('div', { class: 'lb-grid' }, ...BOARDS[side].filter((b) => b.good === good).map((b) => board(b, boards[b.id] || [], role))));
+        h('div', { class: 'lb-grid' }, ...BOARDS[side].filter((b) => b.good === good).map((b) => board(b, boards[b.id] || [], role, all))));
     }
   }
 }
 
-function board(b, rows, role) {
+function board(b, rows, role, all) {
   const fmt = (v) => (b.fmt === 'pct' ? `${v}%` : b.fmt === 'dec' ? Number(v).toFixed(1) : String(v));
   return h('section', { class: 'lb', id: `lb-${b.id}` }, h('h4', { text: b.title }), b.note ? h('p', { class: 'muted small', text: b.note }) : null,
     h('table', { class: 'lb-t' },
       h('thead', {}, h('tr', {}, h('th', { text: '#' }), h('th', { text: 'Name' }), h('th', { text: b.unit }))),
       h('tbody', {}, ...(rows.length ? rows.map((r) => h('tr', { class: r.rank === 1 ? 'first' : '' },
         h('td', { class: 'rank', text: String(r.rank) }),
-        h('td', {}, h('button', { class: 'link', onclick: () => openPerson(role, { key: `${ui.lbTeam}\u0000${r.who}`, team: ui.lbTeam, name: r.who }), text: r.who }),
+        h('td', {}, h('button', { class: 'link', onclick: () => openPerson(role, { key: `${r.team}\u0000${r.who}`, team: r.team, name: r.who }), text: r.who }),
           r.active ? h('span', { class: 'active', title: 'Still going: their latest chance kept it alive', text: 'active' }) : null,
+          all ? h('small', { class: 'lb-team', text: r.team }) : null,
           r.detail ? h('small', { text: r.detail }) : null),
         h('td', { class: 'val', text: fmt(r.value) })))
         : [h('tr', {}, h('td', { colspan: 3, class: 'muted', text: 'Nobody yet' }))]))));
@@ -803,13 +846,80 @@ function highlight(sec, scroll) {
   }
 }
 
+// ---------- a play's video, over the page ----------
+// ▶ on a hitter's or pitcher's plate appearance plays it in a pop-up, so the page stays where it
+// is. The pop-up is a step in the history too: Back closes it. "Open the game" goes to the Games
+// tab at that moment; Close (or Esc, or a tap outside) closes it.
+
+let clip = null; // { dialog, player }
+
 function watch(p) {
-  ui.tab = 'games';
-  ui.game = p.game;
+  const game = model.games.find((g) => g.id === p.game);
+  const id = videoId(game?.video);
+  if (!game || !id) { openGame(p); return; }
+  closeClip(true);
+  remember({ pt: place(), y: window.scrollY }, false);
+  remember({ pt: place(), y: window.scrollY, clip: true }, true);
+  const msg = h('div', { class: 'video-msg', text: 'Loading the video…' });
+  const box = h('div', { class: 'video' }, h('div', { id: 'clip-player' }), msg);
+  const dialog = h('dialog', { class: 'clip', 'aria-label': 'Play video' },
+    h('div', { class: 'clip-head' },
+      h('div', { class: 'who' },
+        h('strong', { text: `${halfName(p)} · ${p.batter || ''}${p.pitcher ? ` vs ${p.pitcher}` : ''}` }),
+        h('span', { class: 'desc', text: p.isPa ? (p.desc || OUTCOME_LABELS[p.outcome] || '') : 'Not finished' }),
+        h('span', { class: 'muted small', text: `${fmtDate(game.date)} · ${game.title}` })),
+      h('button', { class: 'icon clip-x', 'aria-label': 'Close', title: 'Close', onclick: () => closeClip(false), text: '✕' })),
+    box,
+    p.pitches.length ? pitchTiles(p.pitches) : null,
+    h('div', { class: 'buttons' },
+      h('button', { onclick: () => closeClip(false), text: 'Close' }),
+      h('button', { class: 'primary', onclick: () => openGame(p, true), text: 'Open the game' })));
+  dialog.addEventListener('cancel', (e) => { e.preventDefault(); closeClip(false); });
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) closeClip(false); }); // the backdrop
+  document.body.append(dialog);
+  clip = { dialog, player: null };
+  dialog.showModal();
+  const mine = clip;
+  youtubeApi().then(() => {
+    if (clip !== mine) return;
+    mine.player = new window.YT.Player('clip-player', {
+      host: 'https://www.youtube-nocookie.com',
+      videoId: id,
+      playerVars: { rel: 0, playsinline: 1, start: Math.floor(p.video) },
+      events: {
+        onReady: () => { msg.hidden = true; mine.player.seekTo(p.video, true); mine.player.playVideo(); },
+        onError: (e) => {
+          msg.hidden = false;
+          msg.replaceChildren(e.data === 101 || e.data === 150 || e.data === 153 ? "This video's owner doesn't let it play outside YouTube. " : "YouTube couldn't play this video. ",
+            h('a', { href: game.video, target: '_blank', rel: 'noopener', text: 'Open it on YouTube' }));
+        },
+      },
+    });
+  }, () => { msg.replaceChildren("YouTube's player couldn't load here. ", h('a', { href: game.video, target: '_blank', rel: 'noopener', text: 'Open it on YouTube' })); });
+}
+
+// fromHistory: the history step is already gone (Back was pressed, or it is being replaced).
+function closeClip(fromHistory) {
+  if (!clip) return;
+  const { dialog, player: pl } = clip;
+  clip = null;
+  try { pl?.destroy?.(); } catch { /* already gone */ }
+  if (dialog.open) dialog.close();
+  dialog.remove();
+  if (!fromHistory && history.state && history.state.clip) history.back();
+}
+
+// The Games tab at that play. From the pop-up, the game takes the pop-up's place in the history,
+// so Back from the game returns to the hitter or pitcher.
+function openGame(p, fromClip = false) {
   pendingSeek = { game: p.game, sec: p.video };
-  if (ui.session !== 'all' && p.session !== ui.session) ui.session = 'all';
+  const change = { tab: 'games', game: p.game, ...(ui.session !== 'all' && p.session !== ui.session ? { session: 'all' } : {}) };
+  if (!fromClip || !(history.state && history.state.clip)) { closeClip(false); go(change); return; }
+  closeClip(true);
+  Object.assign(ui, change);
   savePrefs();
   render();
+  remember({ pt: place(), y: 0 }, false);
   window.scrollTo(0, 0);
 }
 
@@ -824,14 +934,14 @@ const METRICS = {
     { id: 'avg', label: 'AVG', long: 'Batting average', fmt: 'avg', get: (s) => s.avg, num: (s) => s.h, den: (s) => s.ab, noun: 'at-bats' },
     { id: 'obp', label: 'OBP', long: 'On-base percentage', fmt: 'avg', get: (s) => s.obp, num: (s) => s.h + s.bb + s.hbp, den: (s) => s.ab + s.bb + s.hbp + s.sf, noun: 'plate appearances' },
     { id: 'slg', label: 'SLG', long: 'Slugging', fmt: 'avg', get: (s) => s.slg, num: (s) => s.tb, den: (s) => s.ab, noun: 'at-bats (total bases)' },
-    { id: 'swing', label: 'Swing %', long: 'Swing rate', get: (s) => s.pitch.swingPct, num: (s) => s.pitch.swings, den: (s) => s.pitch.pitches, noun: 'pitches', type: (s, t) => [pt(s, t).swingPct, pt(s, t).pitches] },
-    { id: 'whiff', label: 'Whiff %', long: 'Whiff rate', get: (s) => s.pitch.whiffPct, num: (s) => s.pitch.whiffs, den: (s) => s.pitch.swings, noun: 'swings', trend: true, type: (s, t) => [pt(s, t).whiffPct, pt(s, t).swings] },
-    { id: 'chase', label: 'Chase %', long: 'Chase rate', get: (s) => s.pitch.chasePct, num: (s) => s.pitch.chases, den: (s) => s.pitch.outZone, noun: 'pitches out of the zone', trend: true, type: (s, t) => [pt(s, t).chasePct, pt(s, t).outZone] },
+    { id: 'swing', label: 'Swing %', long: 'Swing rate', neutral: true, get: (s) => s.pitch.swingPct, num: (s) => s.pitch.swings, den: (s) => s.pitch.pitches, noun: 'pitches', type: (s, t) => [pt(s, t).swingPct, pt(s, t).pitches] },
+    { id: 'whiff', label: 'Whiff %', long: 'Whiff rate', lowGood: true, get: (s) => s.pitch.whiffPct, num: (s) => s.pitch.whiffs, den: (s) => s.pitch.swings, noun: 'swings', trend: true, type: (s, t) => [pt(s, t).whiffPct, pt(s, t).swings] },
+    { id: 'chase', label: 'Chase %', long: 'Chase rate', lowGood: true, get: (s) => s.pitch.chasePct, num: (s) => s.pitch.chases, den: (s) => s.pitch.outZone, noun: 'pitches out of the zone', trend: true, type: (s, t) => [pt(s, t).chasePct, pt(s, t).outZone] },
     { id: 'zswing', label: 'Zone swing %', long: 'Swings at pitches in the zone', get: (s) => s.pitch.zSwingPct, num: (s) => s.pitch.zSwings, den: (s) => s.pitch.inZone, noun: 'pitches in the zone' },
-    { id: 'fpswing', label: '1st-pitch swing %', long: 'First-pitch swing rate', get: (s) => s.pitch.firstSwingPct, num: (s) => s.pitch.firstSwings, den: (s) => s.pitch.first, noun: 'first pitches' },
-    { id: 'twok', label: '2-strike whiff %', long: 'Whiff rate with two strikes', get: (s) => s.pitch.twokWhiffPct, num: (s) => s.pitch.twokWhiffs, den: (s) => s.pitch.twokSwings, noun: '2-strike swings' },
-    { id: 'freeze', label: 'Freeze %', long: 'Freeze rate', get: (s) => s.pitch.freezePct, num: (s) => s.pitch.freezes, den: (s) => s.pitch.twok, noun: '2-strike pitches in the zone', trend: true, type: (s, t) => [pt(s, t).freezePct, pt(s, t).twok] },
-    { id: 'k', label: 'K %', long: 'Strikeout rate', get: (s) => s.kPct, num: (s) => s.k, den: (s) => s.pa, noun: 'plate appearances' },
+    { id: 'fpswing', label: '1st-pitch swing %', long: 'First-pitch swing rate', neutral: true, get: (s) => s.pitch.firstSwingPct, num: (s) => s.pitch.firstSwings, den: (s) => s.pitch.first, noun: 'first pitches' },
+    { id: 'twok', label: '2-strike whiff %', long: 'Whiff rate with two strikes', lowGood: true, get: (s) => s.pitch.twokWhiffPct, num: (s) => s.pitch.twokWhiffs, den: (s) => s.pitch.twokSwings, noun: '2-strike swings' },
+    { id: 'freeze', label: 'Freeze %', long: 'Freeze rate', lowGood: true, get: (s) => s.pitch.freezePct, num: (s) => s.pitch.freezes, den: (s) => s.pitch.twok, noun: '2-strike pitches in the zone', trend: true, type: (s, t) => [pt(s, t).freezePct, pt(s, t).twok] },
+    { id: 'k', label: 'K %', long: 'Strikeout rate', lowGood: true, get: (s) => s.kPct, num: (s) => s.k, den: (s) => s.pa, noun: 'plate appearances' },
     { id: 'bb', label: 'BB %', long: 'Walk rate', get: (s) => s.bbPct, num: (s) => s.bb, den: (s) => s.pa, noun: 'plate appearances' },
   ],
   pitcher: [
@@ -854,14 +964,12 @@ const METRICS = {
 };
 const fmtMetric = (m, v) => (m.fmt === 'avg' ? avg(v) : pct(v));
 const metricOf = (role, id) => METRICS[role].find((m) => m.id === id) || METRICS[role][0];
+
 const TEAM = '__team__';
+const ALL = '__all__'; // the leaderboards' "All teams"
 
 function openPerson(role, person) {
-  ui.tab = role === 'batter' ? 'hitters' : 'pitchers';
-  if (role === 'batter') { ui.hitter = person.key; ui.hitTeam = person.team; } else { ui.pitcher = person.key; ui.pitTeam = person.team; }
-  savePrefs();
-  render();
-  window.scrollTo(0, 0);
+  go(role === 'batter' ? { tab: 'hitters', hitter: person.key, hitTeam: person.team } : { tab: 'pitchers', pitcher: person.key, pitTeam: person.team });
 }
 
 function renderPeople(main, plays, role) {
@@ -883,9 +991,9 @@ function renderPeople(main, plays, role) {
   const word = batter ? 'hitters' : 'pitchers';
 
   main.append(h('div', { class: 'controls' },
-    h('select', { 'aria-label': 'Team', onchange: (e) => { ui[teamKey] = e.target.value; ui[personKey] = TEAM; savePrefs(); render(); } },
+    h('select', { 'aria-label': 'Team', onchange: (e) => go({ [teamKey]: e.target.value, [personKey]: TEAM }, false) },
       ...teams.map((t) => h('option', { value: t, selected: t === team, text: t }))),
-    h('select', { class: 'grow', 'aria-label': batter ? 'Hitter' : 'Pitcher', onchange: (e) => { ui[personKey] = e.target.value; render(); } },
+    h('select', { class: 'grow', 'aria-label': batter ? 'Hitter' : 'Pitcher', onchange: (e) => go({ [personKey]: e.target.value }, false) },
       h('option', { value: TEAM, selected: !person, text: `Whole team: all ${roster.length} ${word}` }),
       ...roster.map((p) => h('option', { value: p.key, selected: p === person, text: `${p.name} (${p.line.pa} ${batter ? 'PA' : 'BF'})` })))));
 
@@ -921,7 +1029,7 @@ function renderPeople(main, plays, role) {
     main.append(arsenalTable(role, person ? null : roster, pitches));
     if (!batter) main.append(countSection(pitches));
   }
-  if (!batter) main.append(matchupTable(person ? person.plays : teamPlays));
+  main.append(versusTable(role, subject, person, team));
   if (person) main.append(paList(person.plays, role));
 }
 
@@ -936,7 +1044,7 @@ function kpis(role, s, team) {
       h('span', { class: 'kpi-l', text: m.long }),
       h('span', { class: 'kpi-v', text: fmtMetric(m, v) }),
       h('span', { class: 'kpi-h', text: extraHint || `${m.num(s)} of ${den} ${m.noun}` }),
-      team ? h('span', { class: `kpi-t${v !== null && t !== null ? (v > t === !m.lowGood ? ' up' : v < t === !m.lowGood ? ' down' : '') : ''}`, text: `Team ${fmtMetric(m, t)}` }) : null);
+      team ? h('span', { class: `kpi-t${({ 1: ' up', '-1': ' down' })[better(m, v, t)] || ''}`, text: `Team ${fmtMetric(m, t)}` }) : null);
   };
   const plain = (label, value, hint) => h('div', { class: 'kpi' }, h('span', { class: 'kpi-l', text: label }), h('span', { class: 'kpi-v', text: value }), h('span', { class: 'kpi-h', text: hint }));
   const M = (id) => metricOf(role, id);
@@ -1114,10 +1222,21 @@ function peopleTable(role, roster, teamLine, person) {
     n('Freezes', (s) => s.pitch.freezes), rate(M('freeze')), type(M('freeze'), 'FB'), type(M('freeze'), 'CB'),
     rate(M('k')), rate(M('bb')), n('K', (s) => s.k), n('BB', (s) => s.bb), n('H', (s) => s.h), rate(M('avg')),
   ];
-  const key = batter ? 'hitSort' : 'pitSort';
-  const sort = ui[key] && cols.some((c) => c.label === ui[key].col) ? ui[key] : { col: 'PA', dir: -1 };
-  const col = cols.find((c) => c.label === sort.col) || cols.find((c) => c.label === (batter ? 'PA' : 'BF'));
-  const rows = roster.slice().sort((a, b) => {
+  return h('section', { id: batter ? 'batters' : 'pitchers-table' }, h('h2', { text: batter ? 'Hitters' : 'Pitchers' }),
+    h('p', { class: 'muted small', text: 'Tap a column to sort, or a name to open that player. Faded rates rest on fewer than 5 chances.' }),
+    sortTable({
+      sortKey: batter ? 'hitSort' : 'pitSort', defaultCol: batter ? 'PA' : 'BF', nameHead: batter ? 'Hitter' : 'Pitcher', cols,
+      rows: roster.map((p) => ({ key: p.key, name: p.name, line: p.line, sel: !!person && p.key === person.key, open: () => openPerson(role, p) })),
+      foot: { name: 'Whole team', line: teamLine },
+    }));
+}
+
+// A table of players and numbers that sorts on any column (state in ui[sortKey]). Each row:
+// { key, name, line, team?, sel?, open? }; `teamCol` adds a team column; `foot` a totals row.
+function sortTable({ sortKey, defaultCol, nameHead, cols, rows, foot, teamCol = false }) {
+  const sort = ui[sortKey] && (ui[sortKey].col === 'name' || cols.some((c) => c.label === ui[sortKey].col)) ? ui[sortKey] : { col: defaultCol, dir: -1 };
+  const col = cols.find((c) => c.label === sort.col) || cols.find((c) => c.label === defaultCol);
+  const sorted = rows.slice().sort((a, b) => {
     if (sort.col === 'name') return sort.dir * a.name.localeCompare(b.name);
     const va = col.get(a.line);
     const vb = col.get(b.line);
@@ -1128,19 +1247,19 @@ function peopleTable(role, roster, teamLine, person) {
   const head = (label, id) => h('th', {
     class: `sort${sort.col === id ? (sort.dir > 0 ? ' asc' : ' desc') : ''}`, tabindex: 0, role: 'button',
     'aria-sort': sort.col === id ? (sort.dir > 0 ? 'ascending' : 'descending') : null,
-    onclick: () => { ui[key] = { col: id, dir: sort.col === id ? -sort.dir : id === 'name' ? 1 : -1 }; render(); },
+    onclick: () => { ui[sortKey] = { col: id, dir: sort.col === id ? -sort.dir : id === 'name' ? 1 : -1 }; render(); },
     onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
     text: label,
   });
   const cell = (c, l) => { const v = c.get(l); return h('td', { class: c.thin && c.thin(l) ? 'faint' : '', text: c.fmt(v ?? null) }); };
-  return h('section', { id: batter ? 'batters' : 'pitchers-table' }, h('h2', { text: batter ? 'Hitters' : 'Pitchers' }),
-    h('p', { class: 'muted small', text: 'Tap a column to sort, or a name to open that player. Faded rates rest on fewer than 5 chances.' }),
-    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
-      h('thead', {}, h('tr', {}, head(batter ? 'Hitter' : 'Pitcher', 'name'), ...cols.map((c) => head(c.label, c.label)))),
-      h('tbody', {}, ...rows.map((p) => h('tr', { class: person && p.key === person.key ? 'sel' : '' },
-        h('th', {}, h('button', { class: 'link', onclick: () => openPerson(role, p), text: p.name })),
-        ...cols.map((c) => cell(c, p.line))))),
-      h('tfoot', {}, h('tr', {}, h('th', { text: 'Whole team' }), ...cols.map((c) => (c.label === 'G' ? h('td', { text: int(teamLine.games) }) : cell(c, teamLine))))))));
+  return h('div', { class: 'scroll' }, h('table', { class: 'stats' },
+    h('thead', {}, h('tr', {}, head(nameHead, 'name'), teamCol ? h('th', { text: 'Team' }) : null, ...cols.map((c) => head(c.label, c.label)))),
+    h('tbody', {}, ...sorted.map((r) => h('tr', { class: r.sel ? 'sel' : '' },
+      h('th', {}, r.open ? h('button', { class: 'link', onclick: r.open, text: r.name }) : r.name),
+      teamCol ? h('td', { class: 'left', text: r.team }) : null,
+      ...cols.map((c) => cell(c, r.line))))),
+    foot ? h('tfoot', {}, h('tr', {}, h('th', { text: foot.name }), teamCol ? h('td') : null,
+      ...cols.map((c) => (c.label === 'G' ? h('td', { text: int(foot.line.games) }) : cell(c, foot.line))))) : null));
 }
 
 function arsenalTable(role, roster, pitches) {
@@ -1173,17 +1292,35 @@ function countSection(pitches) {
     h('div', { class: 'key' }, h('span', { class: 'key-i' }, h('span', { class: 'tile t-FB' }), 'fastball'), h('span', { class: 'key-i' }, h('span', { class: 'tile t-CB' }), 'curveball')));
 }
 
-function matchupTable(plays) {
-  const rows = matchups(plays).filter((r) => r.line.batters);
+// How a pitcher (or the team's pitchers) did against each batter faced, or a hitter (or the team's
+// hitters) against each pitcher: every number both sides share, one row per opponent.
+function versusTable(role, plays, person, team) {
+  const batter = role === 'batter';
+  const other = batter ? 'pitcher' : 'batter';
+  const rows = versus(plays, other).filter((r) => r.line.batters || r.line.pa);
   if (!rows.length) return null;
-  return h('section', { id: 'matchups' }, h('h2', { text: 'Batter vs pitcher' }),
-    h('p', { class: 'muted small', text: 'Every pitcher and batter pair. Most useful for live BP, where the same hitters face the same arms again and again. BB includes hit by pitch.' }),
-    h('div', { class: 'scroll' }, h('table', { class: 'stats' },
-      h('thead', {}, h('tr', {}, ...['Pitcher', 'Batter', 'Pitches', 'PA', 'Swing %', 'Whiff %', 'H', 'K', 'BB', 'AVG'].map((x) => h('th', { text: x })))),
-      h('tbody', {}, ...rows.map((r, i) => h('tr', {},
-        h('th', { text: i && rows[i - 1].pitcher === r.pitcher ? '' : r.pitcher }), h('td', { class: 'left', text: r.batter }),
-        ...[int(r.line.pitch.pitches), int(r.line.pa), pct(r.line.pitch.swingPct), pct(r.line.pitch.whiffPct), int(r.line.h), int(r.line.k), int(r.line.bb + r.line.hbp), avg(r.line.avg)]
-          .map((v) => h('td', { text: v }))))))));
+  const B = (id) => metricOf('batter', id);
+  const P = (id) => metricOf('pitcher', id);
+  const rate = (m) => ({ label: m.label, get: m.get, fmt: (v) => fmtMetric(m, v), thin: (s) => m.den(s) < 5 });
+  const n = (label, get) => ({ label, get, fmt: int });
+  const cols = [
+    n('PA', (s) => s.pa), n('Pitches', (s) => s.pitch.pitches),
+    { label: 'Pitches / PA', get: (s) => s.perPa, fmt: (v) => (v === null ? '–' : v.toFixed(1)) },
+    n('AB', (s) => s.ab), n('H', (s) => s.h), n('XBH', (s) => s.xbh), n('HR', (s) => s.hr), n('BB', (s) => s.bb), n('HBP', (s) => s.hbp), n('K', (s) => s.k),
+    rate(B('avg')), rate(B('obp')), rate(B('slg')), rate(B('qab')), rate(B('k')), rate(B('bb')),
+    rate(P('strike')), rate(P('fps')), rate(P('zone')), rate(P('csw')),
+    rate(B('swing')), rate(B('zswing')), rate(B('fpswing')), rate(B('whiff')), rate(B('twok')), rate(B('chase')),
+    n('Freezes', (s) => s.pitch.freezes), rate(B('freeze')),
+  ];
+  const who = person ? person.name : `${team} ${batter ? 'hitters' : 'pitchers'}`;
+  const many = new Set(rows.map((r) => r.team)).size > 1;
+  return h('section', { id: batter ? 'vs-pitchers' : 'matchups' }, h('h2', { text: batter ? 'Against each pitcher' : 'Against each batter' }),
+    h('p', { class: 'muted small', text: `${who} against each ${other} faced${person ? '' : ', all together'}.${batter ? '' : " The rates are the batters': a high whiff rate is good for the pitcher."} Tap a column to sort, or a name to open that ${other}. Faded rates rest on fewer than 5 chances.` }),
+    sortTable({
+      sortKey: batter ? 'hitVsSort' : 'pitVsSort', defaultCol: 'PA', nameHead: batter ? 'Pitcher' : 'Batter', cols, teamCol: many,
+      rows: rows.map((r) => ({ key: r.key, name: r.name, team: r.team, line: r.line, open: () => openPerson(other, r) })),
+      foot: { name: batter ? 'All pitchers' : 'All batters', line: line(plays) },
+    }));
 }
 
 function paList(plays, role) {
