@@ -75,6 +75,24 @@ function pitchOf(p) {
   };
 }
 
+// Plays in at-bat order. The scoresheet numbers plays as they happen, so a steal during Bob's
+// at-bat comes before Bob's plate appearance. Video times mark when an at-bat starts, so lists show
+// each plate appearance first, then the plays during it. Plays after the last plate appearance of a
+// half-inning (a pickoff for the third out) stay at its end. Same rule as atBatOrder in Code.gs.
+// Scores and win probability still follow the order of play (sort by seq for that).
+export function atBatOrder(list) {
+  const out = [];
+  let during = [];
+  let half = null;
+  for (const p of list) {
+    const h = `${p.inning}|${p.half}`;
+    if (h !== half) { out.push(...during); during = []; half = h; }
+    if (p.isPa) { out.push(p, ...during); during = []; } else during.push(p);
+  }
+  out.push(...during);
+  return out;
+}
+
 const halfKey = (inning, half) => `${text(inning)}|${text(half).toLowerCase()}`;
 
 export function buildModel(data) {
@@ -123,6 +141,7 @@ export function buildModel(data) {
       .sort((a, b) => (num(a.pa_number) ?? 0) - (num(b.pa_number) ?? 0));
     const appByHalf = groupBy(app, (p) => halfKey(p.inning, p.half));
     const seen = new Map();
+    const gamePlays = [];
     for (const e of events) {
       const isPa = yes(e.is_pa);
       let pitches = [];
@@ -137,7 +156,7 @@ export function buildModel(data) {
       const t = videoAt.get(`${game}|${text(e.event_seq)}`);
       const out = isPa ? outcomeOf(code) : '';
       finish(pitches, out);
-      plays.push({
+      gamePlays.push({
         game,
         seq: num(e.event_seq),
         inning: num(e.inning),
@@ -166,6 +185,7 @@ export function buildModel(data) {
         wp: values.get(`${game}|${text(e.event_seq)}`) || null,
       });
     }
+    plays.push(...atBatOrder(gamePlays));
   }
 
   // ---- games and live BP only the app recorded ----
@@ -255,7 +275,7 @@ function buildGames(plays, videoLinks) {
       const bottom = list.find((p) => p.half === 'bottom');
       away = top?.team ?? bottom?.opp ?? null;
       home = top?.opp ?? bottom?.team ?? null;
-      const last = list[list.length - 1];
+      const last = list.reduce((a, p) => (p.seq > a.seq ? p : a)); // the last play made, whatever the list order
       if (last.awayBefore !== null && last.homeBefore !== null) {
         score = {
           away: last.awayBefore + (last.half === 'top' ? last.runs : 0),

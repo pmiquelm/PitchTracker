@@ -406,7 +406,7 @@ function drawWpChart() {
   const el = document.getElementById('wp-chart');
   const game = model.games.find((g) => g.id === ui.game);
   if (!el || !game) return;
-  const plays = game.plays.filter((p) => p.wp);
+  const plays = game.plays.filter((p) => p.wp).sort((a, b) => a.seq - b.seq); // the order of play
   const home = wpSide(game) === 'home';
   const team = home ? game.home : game.away;
   const val = (w) => 100 * (home ? w : 1 - w);
@@ -1128,7 +1128,7 @@ function paList(plays, role) {
           h('span', { class: 'desc', text: batter ? (p.pitcher ? `vs ${p.pitcher}` : '') : p.batter }),
           p.isPa && p.desc && p.desc !== OUTCOME_LABELS[p.outcome] ? h('span', { class: 'muted small', text: p.desc }) : null),
         pitchTiles(p.pitches),
-        p.video !== null ? h('button', { class: 'watch', onclick: () => watch(p), text: '▶ Watch' }) : h('span', { class: 'watch-none' })))))));
+        p.video !== null ? h('button', { class: 'watch', title: 'Watch it in the game video', 'aria-label': 'Watch it in the game video', onclick: () => watch(p), text: '▶' }) : h('span', { class: 'watch-none' })))))));
 }
 
 boot();

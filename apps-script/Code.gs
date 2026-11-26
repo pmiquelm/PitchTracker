@@ -21,7 +21,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 8;
+const VERSION = 9;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -413,6 +413,24 @@ function showVideoTool() {
   SpreadsheetApp.getUi().showModelessDialog(html, 'Video timestamps');
 }
 
+// Plays in at-bat order. The scoresheet numbers plays as they happen, so a steal during Bob's
+// at-bat comes before Bob's plate appearance. Times mark when an at-bat starts, so here each plate
+// appearance comes first, then the plays that happened during it. Plays after the last plate
+// appearance of a half-inning (a pickoff for the third out) stay at its end. `events` must be in
+// play order; each has isPa, inning and half.
+function atBatOrder(events) {
+  const out = [];
+  let during = [];
+  let half = null;
+  events.forEach((e) => {
+    const h = e.inning + '|' + e.half;
+    if (h !== half) { out.push.apply(out, during); during = []; half = h; }
+    if (e.isPa) { out.push(e); out.push.apply(out, during); during = []; } else during.push(e);
+  });
+  out.push.apply(out, during);
+  return out;
+}
+
 // The 11-character video id from a YouTube link (watch, youtu.be, live, shorts, embed)
 // or a bare id; '' if it isn't one. Strict: the id ends up inside a link.
 function youtubeId(text) {
@@ -580,9 +598,10 @@ function videoToolEvents(gameId) {
     const times = readVideoTimes_(ss);
     const events = readPbp_(ss).filter((e) => e.game === game);
     events.sort((a, b) => Number(a.seq) - Number(b.seq));
+    // At-bat order: each plate appearance, then the plays during it (times mark when an at-bat starts).
     return {
       link: readVideoLinks_(ss)[game] || '',
-      events: events.map((e) => {
+      events: atBatOrder(events).map((e) => {
         const t = times[eventKey(e.game, e.seq)];
         const ok = !!t && t.check === eventCheck(e.code, e.batter);
         return { seq: e.seq, inning: e.inning, half: e.half, team: e.team, batter: e.batter, code: e.code,

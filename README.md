@@ -197,7 +197,8 @@ appearance; other games and live BP show the app's plate appearances.
 If a game is on YouTube, every play in the **PlayByPlay** tab (plate appearances and plays between pitches:
 steals, wild pitches, pickoffs…) can get a link to its moment in the video. In the sheet, on a computer:
 **PitchTracker → Video timestamps** (the menu appears a few seconds after the sheet opens). A window opens with the
-video on the left and the game's plays on the right, in order.
+video on the left and the game's plays on the right, in at-bat order: each plate appearance, then the plays that
+happened during it (a steal during Bob's at-bat comes after Bob's at-bat), because a time marks when an at-bat starts.
 
 1. Pick the game and paste its YouTube link (kept in the **Videos** tab, so next time it's filled in).
 2. Play or skip to where the next play starts and press **Enter**. The highlighted play gets the video's current
