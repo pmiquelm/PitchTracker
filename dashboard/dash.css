@@ -318,3 +318,19 @@ details.model summary { cursor: pointer; font-weight: 600; }
 .mix .seg.t-CB { background: var(--cb); }
 /* On a phone the page itself scrolls under the header and video: inning headers don't stick there. */
 @media (max-width: 899px) { .plays .half, .pa-list .half { position: static; } }
+
+/* ---- wide tables: the name column shrinks to initials as the table scrolls (freezeNames) ---- */
+.stats.frozen .gap { padding: 0; min-width: var(--gap-px, 0px); width: var(--gap-px, 0px); border-bottom-color: var(--line); }
+.stats .cc { white-space: nowrap; }
+.stats .cc .c-short { white-space: nowrap; }
+.stats .cc .c-full {
+  position: absolute; left: 0; top: 0; height: 100%; box-sizing: border-box; padding: 6px 10px;
+  display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: var(--full-w, 52vw); background: var(--surface);
+  clip-path: inset(0 var(--s, 0px) 0 0); opacity: var(--o, 1);
+}
+.stats .cc button.link { position: static; }
+.stats tr.sel .cc .c-full { background: var(--accent-soft); }
+.stats .cc.wrap { white-space: nowrap; min-width: 0; max-width: none; }
+.scroll.scrolled .stats th:first-child, .scroll.scrolled .stats td:first-child { box-shadow: 1px 0 0 var(--line), 6px 0 8px -6px rgba(0, 0, 0, .25); }
+.stats th:first-child, .stats td:first-child { z-index: 1; }
