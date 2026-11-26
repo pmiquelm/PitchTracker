@@ -955,7 +955,8 @@ them going; ties share a rank. Names are the scoresheet's where a game has one (
 ### 9.8 The video
 
 The page embeds YouTube's IFrame player from `youtube-nocookie.com`. Tapping a play's ▶ seeks to its time; **▶** on a
-hitter's or pitcher's plate appearance opens that game at that moment.
+hitter's or pitcher's plate appearance plays it in a pop-up over the page, which stays where it was. The pop-up closes
+with ✕, Close, Esc, a tap outside it or Back; **Open the game** goes to the Games tab at that moment instead.
 
 **Follow the video** checks the player's time every 0.7 s and marks the last play whose time has passed. On a wide
 screen it scrolls the list of plays beside the video; on a phone, where the whole page scrolls under the header and the
@@ -965,7 +966,7 @@ If YouTube can't load, or the video's owner doesn't allow embedding, the page sa
 
 **Going back.** Opening a tab, game, team or player is a step in the browser's history (`go` in
 [`dash.js`](../dashboard/dash.js)), with where the page was scrolled to. The back gesture or button returns to the
-place before instead of leaving the dashboard; nothing is added to the address.
+place before instead of leaving the dashboard; nothing is added to the address. An open video pop-up is a step too.
 
 ### 9.9 The page
 
@@ -1355,7 +1356,7 @@ From [`CLAUDE.md`](../CLAUDE.md):
 | [`js/connect.js`](../js/connect.js) | 134 | Setup and dashboard links, validation, sheet code (8, 9.2); also used by the dashboard |
 | [`js/vendor/qrcodegen.js`](../js/vendor/qrcodegen.js) | 846 | QR code library, vendored and pinned (8.7) |
 | [`dashboard/index.html`](../dashboard/index.html) | 23 | The dashboard's page shell and security policy (9.9) |
-| [`dashboard/dash.js`](../dashboard/dash.js) | 1,270 | The dashboard page: links, reading, every tab, charts, video (9) |
+| [`dashboard/dash.js`](../dashboard/dash.js) | 1,347 | The dashboard page: links, reading, every tab, charts, video (9) |
 | [`dashboard/model.js`](../dashboard/model.js) | 504 | Plays, games and every number (9.4, 9.5) |
 | [`dashboard/winprob.js`](../dashboard/winprob.js) | 415 | Run expectancy and win probability (9.6) |
 | [`dashboard/leaders.js`](../dashboard/leaders.js) | 218 | Leaderboards (9.7) |

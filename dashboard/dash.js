@@ -286,8 +286,13 @@ function go(change, toTop = true) {
   if (toTop) window.scrollTo(0, 0);
 }
 
+// The page restores its own scroll (each step keeps it), so the browser mustn't as well.
+try { history.scrollRestoration = 'manual'; } catch { /* old browsers */ }
+
 window.addEventListener('popstate', (e) => {
   const st = e.state && e.state.pt;
+  // Back with a play's video open closes it and stays on the page under it.
+  if (clip) { closeClip(true); if (samePlace(st, place())) return; }
   if (!st || !model) return;
   Object.assign(ui, st);
   savePrefs();
@@ -841,9 +846,81 @@ function highlight(sec, scroll) {
   }
 }
 
+// ---------- a play's video, over the page ----------
+// ▶ on a hitter's or pitcher's plate appearance plays it in a pop-up, so the page stays where it
+// is. The pop-up is a step in the history too: Back closes it. "Open the game" goes to the Games
+// tab at that moment; Close (or Esc, or a tap outside) closes it.
+
+let clip = null; // { dialog, player }
+
 function watch(p) {
+  const game = model.games.find((g) => g.id === p.game);
+  const id = videoId(game?.video);
+  if (!game || !id) { openGame(p); return; }
+  closeClip(true);
+  remember({ pt: place(), y: window.scrollY }, false);
+  remember({ pt: place(), y: window.scrollY, clip: true }, true);
+  const msg = h('div', { class: 'video-msg', text: 'Loading the video…' });
+  const box = h('div', { class: 'video' }, h('div', { id: 'clip-player' }), msg);
+  const dialog = h('dialog', { class: 'clip', 'aria-label': 'Play video' },
+    h('div', { class: 'clip-head' },
+      h('div', { class: 'who' },
+        h('strong', { text: `${halfName(p)} · ${p.batter || ''}${p.pitcher ? ` vs ${p.pitcher}` : ''}` }),
+        h('span', { class: 'desc', text: p.isPa ? (p.desc || OUTCOME_LABELS[p.outcome] || '') : 'Not finished' }),
+        h('span', { class: 'muted small', text: `${fmtDate(game.date)} · ${game.title}` })),
+      h('button', { class: 'icon clip-x', 'aria-label': 'Close', title: 'Close', onclick: () => closeClip(false), text: '✕' })),
+    box,
+    p.pitches.length ? pitchTiles(p.pitches) : null,
+    h('div', { class: 'buttons' },
+      h('button', { onclick: () => closeClip(false), text: 'Close' }),
+      h('button', { class: 'primary', onclick: () => openGame(p, true), text: 'Open the game' })));
+  dialog.addEventListener('cancel', (e) => { e.preventDefault(); closeClip(false); });
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) closeClip(false); }); // the backdrop
+  document.body.append(dialog);
+  clip = { dialog, player: null };
+  dialog.showModal();
+  const mine = clip;
+  youtubeApi().then(() => {
+    if (clip !== mine) return;
+    mine.player = new window.YT.Player('clip-player', {
+      host: 'https://www.youtube-nocookie.com',
+      videoId: id,
+      playerVars: { rel: 0, playsinline: 1, start: Math.floor(p.video) },
+      events: {
+        onReady: () => { msg.hidden = true; mine.player.seekTo(p.video, true); mine.player.playVideo(); },
+        onError: (e) => {
+          msg.hidden = false;
+          msg.replaceChildren(e.data === 101 || e.data === 150 || e.data === 153 ? "This video's owner doesn't let it play outside YouTube. " : "YouTube couldn't play this video. ",
+            h('a', { href: game.video, target: '_blank', rel: 'noopener', text: 'Open it on YouTube' }));
+        },
+      },
+    });
+  }, () => { msg.replaceChildren("YouTube's player couldn't load here. ", h('a', { href: game.video, target: '_blank', rel: 'noopener', text: 'Open it on YouTube' })); });
+}
+
+// fromHistory: the history step is already gone (Back was pressed, or it is being replaced).
+function closeClip(fromHistory) {
+  if (!clip) return;
+  const { dialog, player: pl } = clip;
+  clip = null;
+  try { pl?.destroy?.(); } catch { /* already gone */ }
+  if (dialog.open) dialog.close();
+  dialog.remove();
+  if (!fromHistory && history.state && history.state.clip) history.back();
+}
+
+// The Games tab at that play. From the pop-up, the game takes the pop-up's place in the history,
+// so Back from the game returns to the hitter or pitcher.
+function openGame(p, fromClip = false) {
   pendingSeek = { game: p.game, sec: p.video };
-  go({ tab: 'games', game: p.game, ...(ui.session !== 'all' && p.session !== ui.session ? { session: 'all' } : {}) });
+  const change = { tab: 'games', game: p.game, ...(ui.session !== 'all' && p.session !== ui.session ? { session: 'all' } : {}) };
+  if (!fromClip || !(history.state && history.state.clip)) { closeClip(false); go(change); return; }
+  closeClip(true);
+  Object.assign(ui, change);
+  savePrefs();
+  render();
+  remember({ pt: place(), y: 0 }, false);
+  window.scrollTo(0, 0);
 }
 
 // ---------- hitters and pitchers ----------
