@@ -100,6 +100,7 @@ export function buildModel(data) {
   const appPas = objects(data.pas);
   const appPitches = objects(data.pitches);
   const videoLinks = data.videos || {};
+  const scoresheetLinks = data.scoresheets || {};
 
   // A time counts only if the play at that number is still the one that was stamped.
   const videoAt = new Map();
@@ -219,7 +220,7 @@ export function buildModel(data) {
 
   return {
     plays,
-    games: buildGames(plays, videoLinks),
+    games: buildGames(plays, videoLinks, scoresheetLinks),
     runModel: { rates: rateRows, re: reTable(runModel, values) },
   };
 }
@@ -260,7 +261,7 @@ export function compareGames(a, b) {
   return (b.date || '').localeCompare(a.date || '') || (b.number ?? 0) - (a.number ?? 0) || b.id.localeCompare(a.id);
 }
 
-function buildGames(plays, videoLinks) {
+function buildGames(plays, videoLinks, scoresheetLinks) {
   const byGame = groupBy(plays, (p) => p.game);
   const games = [];
   for (const [id, list] of byGame) {
@@ -294,12 +295,20 @@ function buildGames(plays, videoLinks) {
       home,
       score,
       video: videoLinks[id] || null,
+      scoresheet: scoresheetLink(scoresheetLinks[id]),
       timed: list.filter((p) => p.video !== null).length,
       source: list[0].source,
       plays: list,
     });
   }
   return games.sort(compareGames);
+}
+
+// The game's scoresheet PDF on the federation's match system, or null. The script already checks
+// the link; this checks again because it becomes an href.
+export function scoresheetLink(url) {
+  const s = typeof url === 'string' ? url.trim() : '';
+  return /^https:\/\/bsm\.baseball-softball\.de\/matches\/\d{1,9}\/combined_scoresheets\/Spiel-\d{1,12}-\d{1,2}$/.test(s) ? s : null;
 }
 
 // "2026-04-11- @ FLAMINGOS GAME 2" → "@ FLAMINGOS GAME 2".

@@ -876,7 +876,11 @@ sends, each as `{cols, rows}`, with columns found by their header name so moved 
 - **Pitches** and **PlateAppearances**: only the columns the dashboard uses, without deleted rows, and without IDs or
   recorder names;
 - **PlayByPlay**, every column but the `video` formula;
-- **VideoTimes**, and the game links from **Videos**.
+- **VideoTimes**, and the game links from **Videos**;
+- each game's scoresheet link, from the **Scoresheets** tab's `scoresheet_url` column (the PDF on the federation's
+  match system, `https://bsm.baseball-softball.de/matches/<id>/combined_scoresheets/Spiel-<number>`). Only links of
+  exactly that shape are sent ([`scoresheetUrl`](../apps-script/Code.gs)), and the page checks again before making one
+  a link. The Games tab shows it at the very bottom of the game.
 
 Nothing is kept on the device. The page reads again when it comes back to the screen after 5 minutes, or on ↻.
 

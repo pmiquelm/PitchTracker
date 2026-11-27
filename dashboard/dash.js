@@ -482,6 +482,9 @@ function renderGames(main) {
   main.append(h('div', { class: 'game-grid' }, head, video, valued ? wpSection(game) : null,
     h('section', { class: 'game-right' }, h('h2', { text: 'Every play' }), pitchKey(), list), boxScore(game)));
   if (valued) main.append(bigPlays(game), whoMoved(game), modelDetails());
+  main.append(h('p', { class: 'scoresheet-link small' }, game.scoresheet
+    ? h('a', { href: game.scoresheet, target: '_blank', rel: 'noopener noreferrer', text: 'Official scoresheet (PDF) ↗' })
+    : h('span', { class: 'muted', text: 'No scoresheet linked for this game.' })));
 }
 
 // ---------- win probability ----------

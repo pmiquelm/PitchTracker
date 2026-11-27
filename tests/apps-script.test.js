@@ -61,7 +61,7 @@ function load(sheets = {}) {
   };
   vm.createContext(ctx);
   vm.runInContext(`${readFileSync(new URL('../apps-script/Code.gs', import.meta.url), 'utf8')}
-    this.api = { setup, doPost, doGet, HEADERS, PA_HEADERS, youtubeId, columnLetter, pbpVideoFormula,
+    this.api = { setup, doPost, doGet, HEADERS, PA_HEADERS, youtubeId, scoresheetUrl, columnLetter, pbpVideoFormula,
       videoToolGames, videoToolEvents, saveVideoLink, setVideoTime };`, ctx);
   const { HEADERS, PA_HEADERS, ...fns } = ctx.api;
   return { ss, props, ...fns, HEADERS: [...HEADERS], PA_HEADERS: [...PA_HEADERS] }; // copied out of the sandbox for deepEqual
@@ -74,9 +74,9 @@ test('fresh setup, then upserts into both sheets', () => {
   api.setup();
   assert.deepEqual(api.ss.getSheetByName('Pitches').cells[0], api.HEADERS);
   assert.deepEqual(api.ss.getSheetByName('PlateAppearances').cells[0], api.PA_HEADERS);
-  assert.equal(api.doGet().version, 9);
+  assert.equal(api.doGet().version, 10);
   const res = post(api, { rows: [{ id: 'p1', batter: 'A', half: 'top' }], pas: [{ id: 'p1', result: '2B', fielder: 'CF' }] });
-  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 9, 1, 1]);
+  assert.deepEqual([res.ok, res.version, res.received, res.pas], [true, 10, 1, 1]);
   post(api, { rows: [{ id: 'p1', batter: 'A', deleted: true }], pas: [] });
   const pitches = api.ss.getSheetByName('Pitches').cells;
   assert.equal(pitches.length, 2, 'upsert, not append');
@@ -194,7 +194,7 @@ test('rosters action reads filled blocks, needs the token, and never rewrites th
   const before = JSON.stringify(sheet.cells);
   const res = post(api, { action: 'rosters' });
   assert.equal(res.ok, true, res.error);
-  assert.equal(res.version, 9);
+  assert.equal(res.version, 10);
   assert.deepEqual(JSON.parse(JSON.stringify(res.rosters)), [
     { name: 'Tigers', players: [{ number: '07', name: 'Lopez' }, { number: '12', name: 'Kim' }] },
     { name: 'Roster 2', players: [{ number: '', name: 'Ann' }] },
@@ -418,7 +418,7 @@ test('the viewer key needs the token, is made once, and renew replaces it', () =
   assert.equal(bad.ok, false);
   assert.equal(api.props.get('VIEW_KEY'), undefined, 'nothing made without the token');
   const a = post(api, { action: 'viewerKey' });
-  assert.deepEqual([a.ok, a.version], [true, 9]);
+  assert.deepEqual([a.ok, a.version], [true, 10]);
   assert.match(a.key, /^[A-Za-z0-9_-]{20,}$/);
   assert.notEqual(a.key, 'tok');
   assert.equal(post(api, { action: 'viewerKey' }).key, a.key, 'asking again gives the same key');
@@ -473,5 +473,37 @@ test('the dashboard works on a sheet with no PlayByPlay or video tabs', () => {
   const { key } = post(api, { action: 'viewerKey' });
   const d = dash(api, key);
   assert.equal(d.ok, true);
-  assert.deepEqual([d.pbp.rows, d.videoTimes.rows, d.pitches.rows, d.videos], [[], [], [], {}]);
+  assert.deepEqual([d.pbp.rows, d.videoTimes.rows, d.pitches.rows, d.videos, d.scoresheets], [[], [], [], {}, {}]);
+});
+
+const SHEET_URL = 'https://bsm.baseball-softball.de/matches/59813/combined_scoresheets/Spiel-10220503-1';
+
+test('scoresheetUrl accepts scoresheet links from the federation site and nothing else', () => {
+  const api = load();
+  for (const ok of [SHEET_URL, ` ${SHEET_URL} `]) assert.equal(api.scoresheetUrl(ok), SHEET_URL, ok);
+  for (const bad of ['', null, 'http://bsm.baseball-softball.de/matches/59813/combined_scoresheets/Spiel-10220503-1',
+    'https://bsm.baseball-softball.de.evil.com/matches/59813/combined_scoresheets/Spiel-10220503-1',
+    'https://evil.com/?https://bsm.baseball-softball.de/matches/59813/combined_scoresheets/Spiel-10220503-1',
+    `${SHEET_URL}?x=1`, `${SHEET_URL}"><script>`, 'javascript:alert(1)',
+    'https://bsm.baseball-softball.de/matches/59813/combined_scoresheets/../../users/sign_in',
+    'https://bsm.baseball-softball.de/user/sign_in']) assert.equal(api.scoresheetUrl(bad), '', String(bad));
+});
+
+test('the dashboard gets scoresheet links from the Scoresheets tab, by header name', () => {
+  const api = load({
+    Scoresheets: [
+      ['game_id', 'date', 'notation', 'scoresheet_url'],
+      ['g1', '2026-05-09', 'game: g1', SHEET_URL],
+      ['g2', '2026-05-09', 'game: g2', 'javascript:alert(1)'],
+      ['g3', '2026-05-09', 'game: g3', ''],
+      ['', '', '', SHEET_URL],
+    ],
+  });
+  api.setup();
+  const { key } = post(api, { action: 'viewerKey' });
+  assert.deepEqual(dash(api, key).scoresheets, { g1: SHEET_URL }, 'only valid links, only rows with a game');
+  // An older Scoresheets tab without the column: no links, no error
+  api.ss.getSheetByName('Scoresheets').cells = [['game_id', 'notation'], ['g1', 'game: g1']];
+  const d = dash(api, key);
+  assert.deepEqual([d.ok, d.scoresheets], [true, {}]);
 });
