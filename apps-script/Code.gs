@@ -21,7 +21,7 @@
 
 // The app refuses to sync with a script older than its minimum. Bump this on every change:
 // the deploy workflow checks the live script reports it, to confirm the deploy went live.
-const VERSION = 9;
+const VERSION = 10;
 
 const SHEET_NAME = 'Pitches';
 // Keep in sync with PITCH_COLUMNS in js/game.js (+ synced_at at the end).
@@ -343,6 +343,7 @@ function dashboard_(body) {
       pbp: readTab_(ss, PBP_SHEET_NAME, null, false),
       videoTimes: readTab_(ss, VIDEO_TIMES_SHEET_NAME, DASH_VIDEO_TIME_COLUMNS, false),
       videos: readVideoLinks_(ss),
+      scoresheets: readScoresheetLinks_(ss),
     });
   } catch (err) {
     return json({ ok: false, error: String(err) });
@@ -398,6 +399,9 @@ const VIDEO_TIMES_SHEET_NAME = 'VideoTimes';
 const VIDEO_TIMES_HEADERS = ['game_id', 'event_seq', 'event_code', 'batter', 'seconds', 'link', 'label', 'updated_at'];
 const VIDEO_LINKS_SHEET_NAME = 'Videos';
 const VIDEO_LINKS_HEADERS = ['game_id', 'youtube_link'];
+// The Scoresheets tab (one row per transcribed game) may have a `scoresheet_url` column: the
+// game's scoresheet PDF on the federation's site, shown on the dashboard's game page.
+const SCORESHEETS_SHEET_NAME = 'Scoresheets';
 const PBP_NEEDED = ['game_id', 'event_seq', 'event_code', 'batter'];
 const MAX_VIDEO_SECONDS = 48 * 3600;
 
@@ -535,6 +539,32 @@ function readVideoLinks_(ss) {
   sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues().forEach((r) => {
     const id = youtubeId(r[1]);
     if (cellText(r[0]) && id) links[cellText(r[0])] = 'https://www.youtube.com/watch?v=' + id;
+  });
+  return links;
+}
+
+// A link to a scoresheet PDF on the federation's match system, rebuilt from its parts; '' if it
+// isn't one. Strict, like youtubeId: the text ends up as a link on the dashboard.
+function scoresheetUrl(text) {
+  const m = String(text == null ? '' : text).trim()
+    .match(/^https:\/\/bsm\.baseball-softball\.de\/matches\/(\d{1,9})\/combined_scoresheets\/(Spiel-[0-9]{1,12}-[0-9]{1,2})$/);
+  return m ? 'https://bsm.baseball-softball.de/matches/' + m[1] + '/combined_scoresheets/' + m[2] : '';
+}
+
+// game_id → scoresheet link, from the Scoresheets tab's `scoresheet_url` column (found by header
+// name; no column, no links).
+function readScoresheetLinks_(ss) {
+  const sheet = ss.getSheetByName(SCORESHEETS_SHEET_NAME);
+  const links = {};
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 1) return links;
+  const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+  const header = values[0].map(cellText);
+  const game = header.indexOf('game_id');
+  const url = header.indexOf('scoresheet_url');
+  if (game < 0 || url < 0) return links;
+  values.slice(1).forEach((r) => {
+    const link = scoresheetUrl(r[url]);
+    if (cellText(r[game]) && link) links[cellText(r[game])] = link;
   });
   return links;
 }

@@ -148,6 +148,7 @@ button.icon { background: transparent; color: inherit; border-color: rgba(255, 2
 }
 .follow { display: block; margin-top: 6px; font-size: .85rem; color: var(--muted); }
 .no-video { margin: 10px 0; }
+.scoresheet-link { margin: 24px 0 8px; }
 
 .plays, .pa-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .half {

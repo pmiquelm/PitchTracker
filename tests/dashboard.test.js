@@ -1,7 +1,7 @@
 // The team dashboard's numbers (dashboard/model.js), from data shaped like the script sends it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, versus, better, atBatOrder } from '../dashboard/model.js';
+import { buildModel, scoresheetLink, line, outcomeOf, arsenal, players, gameTitle, filterSession, outcomeCounts, byGame, countGrid, versus, better, atBatOrder } from '../dashboard/model.js';
 
 const tab = (cols, rows) => ({ cols, rows: rows.map((r) => cols.map((c) => r[c] ?? '')) });
 const PBP_COLS = ['game_id', 'date', 'event_seq', 'inning', 'half', 'batting_team', 'fielding_team', 'batter', 'pitcher',
@@ -189,4 +189,16 @@ test('better: high is good unless lowGood, neutral and ties are neither', () => 
   assert.equal(better({}, 0.3, 0.3), 0);
   assert.equal(better({ neutral: true }, 0.9, 0.1), 0);
   assert.equal(better({}, null, 0.1), 0);
+});
+
+test('each game carries its scoresheet link, only when it is a federation scoresheet URL', () => {
+  const URL_OK = 'https://bsm.baseball-softball.de/matches/59813/combined_scoresheets/Spiel-10220503-1';
+  const m = buildModel({ ...sample(), scoresheets: { [G]: URL_OK } });
+  assert.equal(m.games.find((g) => g.id === G).scoresheet, URL_OK);
+  assert.ok(m.games.filter((g) => g.id !== G).every((g) => g.scoresheet === null), 'other games have none');
+  assert.equal(buildModel(sample()).games.find((g) => g.id === G).scoresheet, null, 'an older script sends no links');
+  for (const bad of ['javascript:alert(1)', 'http://bsm.baseball-softball.de/matches/1/combined_scoresheets/Spiel-1-1',
+    'https://evil.example/matches/1/combined_scoresheets/Spiel-1-1', `${URL_OK}?x`, 42, null]) {
+    assert.equal(scoresheetLink(bad), null, String(bad));
+  }
 });

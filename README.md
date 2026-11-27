@@ -253,7 +253,8 @@ Full detail, including what each request to the script needs: [guide section 13]
 | `deleted`, `recorded_by`, `session_type`, `synced_at` | as above |
 
 The other tabs: **Rosters** (typed in), **Summary** (built by the script), **PlayByPlay** and **Scoresheets** (from the
-scoresheet transcriptions, made outside the app), **VideoTimes** and **Videos** (the video timestamps), and copies named
+scoresheet transcriptions, made outside the app; Scoresheets' `scoresheet_url` column links each game's official
+scoresheet PDF on the dashboard), **VideoTimes** and **Videos** (the video timestamps), and copies named
 *… (before update …)* kept when a layout change moved rows.
 
 ## Development
